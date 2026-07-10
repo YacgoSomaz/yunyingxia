@@ -84,6 +84,7 @@ pwsh -File packaging\build\build_release.ps1 `
   -Version 1.0.0 `
   -Commercial `
   -LicenseServerUrl "https://license.runmo.art" `
+  -ProductCode "wanshan_media" `
   -LicensePublicKey $env:WANSHAN_LICENSE_PUBLIC_KEY
 ```
 

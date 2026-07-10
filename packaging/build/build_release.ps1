@@ -4,6 +4,7 @@ param(
   [switch]$Commercial,
   [string]$LicenseServerUrl = 'https://license.runmo.art',
   [string]$LicensePublicKey = '',
+  [string]$ProductCode = 'wanshan_media',
   [string]$OutputRoot = '',
   [switch]$SkipInstaller
 )
@@ -28,6 +29,7 @@ if ($Commercial) {
   $uri = [Uri]$LicenseServerUrl
   if ($uri.Scheme -ne 'https') { throw '商业版授权服务必须使用 HTTPS' }
   if ([string]::IsNullOrWhiteSpace($LicensePublicKey)) { throw '商业版构建必须提供 -LicensePublicKey' }
+  if ($ProductCode -notmatch '^[A-Za-z0-9_.-]{1,64}$') { throw "产品代码格式无效: $ProductCode" }
 }
 
 function Invoke-Step([string]$File, [string[]]$Arguments) {
@@ -78,6 +80,7 @@ $commercialConfig = [ordered]@{
   commercial = [bool]$Commercial
   licenseServerUrl = $LicenseServerUrl.TrimEnd('/')
   licensePublicKey = if ($Commercial) { $LicensePublicKey } else { '' }
+  productCode = $ProductCode
   offlineGraceHours = 72
   appName = '万山自媒体'
   version = $Version
