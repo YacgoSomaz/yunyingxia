@@ -5,6 +5,7 @@ param(
   [string]$LicenseServerUrl = 'https://license.runmo.art',
   [string]$LicensePublicKey = '',
   [string]$ProductCode = 'wanshan_media',
+  [string]$IntegrityPrivateKeyPath = '',
   [string]$OutputRoot = '',
   [switch]$SkipInstaller
 )
@@ -30,6 +31,7 @@ if ($Commercial) {
   if ($uri.Scheme -ne 'https') { throw '商业版授权服务必须使用 HTTPS' }
   if ([string]::IsNullOrWhiteSpace($LicensePublicKey)) { throw '商业版构建必须提供 -LicensePublicKey' }
   if ($ProductCode -notmatch '^[A-Za-z0-9_.-]{1,64}$') { throw "产品代码格式无效: $ProductCode" }
+  if (-not $IntegrityPrivateKeyPath) { throw '商业版构建必须提供 -IntegrityPrivateKeyPath' }
 }
 
 function Invoke-Step([string]$File, [string[]]$Arguments) {
@@ -76,10 +78,22 @@ foreach ($dir in @('dist', 'renderer', 'drizzle', 'node_modules')) {
 }
 
 Write-Host "[4/7] 写入商业配置并清理源码/开发文件"
+$manifestTool = Join-Path $ProjectRoot 'packaging\build\manifest-tool.cjs'
+$temporaryIntegrityKey = $false
+if (-not $IntegrityPrivateKeyPath) {
+  $IntegrityPrivateKeyPath = Join-Path $env:TEMP "wanshan-integrity-$([guid]::NewGuid().ToString('N')).pem"
+  Invoke-Step 'node.exe' @($manifestTool, 'generate', $IntegrityPrivateKeyPath)
+  $temporaryIntegrityKey = $true
+} elseif (-not (Test-Path $IntegrityPrivateKeyPath)) {
+  throw "完整性签名私钥文件不存在: $IntegrityPrivateKeyPath"
+}
+$integrityPublicKey = (& node.exe $manifestTool 'public' $IntegrityPrivateKeyPath).Trim()
+if ($LASTEXITCODE -ne 0 -or $integrityPublicKey.Length -lt 40) { throw '无法读取完整性签名公钥' }
 $commercialConfig = [ordered]@{
   commercial = [bool]$Commercial
   licenseServerUrl = $LicenseServerUrl.TrimEnd('/')
   licensePublicKey = if ($Commercial) { $LicensePublicKey } else { '' }
+  integrityPublicKey = $integrityPublicKey
   productCode = $ProductCode
   offlineGraceHours = 72
   appName = '万山自媒体'
@@ -116,6 +130,8 @@ $manifestObject = [ordered]@{ version = 1; algorithm = 'sha256'; files = $entrie
 $manifestObject |
   ConvertTo-Json -Depth 10 -Compress:$false |
   Set-Content (Join-Path $appRoot 'integrity_manifest.json') -Encoding UTF8
+Invoke-Step 'node.exe' @($manifestTool, 'sign', (Join-Path $appRoot 'integrity_manifest.json'), $IntegrityPrivateKeyPath)
+if ($temporaryIntegrityKey -and (Test-Path $IntegrityPrivateKeyPath)) { Remove-Item $IntegrityPrivateKeyPath -Force }
 
 Write-Host "[6/7] 验收发布目录"
 $requiredRelease = @(

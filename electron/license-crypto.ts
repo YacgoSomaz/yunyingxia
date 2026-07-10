@@ -20,6 +20,10 @@ function publicKeyObject(publicKey: string): crypto.KeyObject {
   return crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' })
 }
 
+export function verifyEd25519Signature(payload: Buffer, signature: Buffer, publicKey: string): boolean {
+  return crypto.verify(null, payload, publicKeyObject(publicKey), signature)
+}
+
 export function verifyLicenseDocument(
   document: SignedLicenseDocument,
   publicKey: string,
@@ -29,7 +33,7 @@ export function verifyLicenseDocument(
   if (document.alg && document.alg !== 'Ed25519') throw new Error('授权签名算法不受支持')
   const payloadBytes = decodeBase64Url(String(document.payload || ''))
   const signature = decodeBase64Url(String(document.signature || ''))
-  if (!crypto.verify(null, payloadBytes, publicKeyObject(publicKey), signature)) throw new Error('授权响应签名校验失败')
+  if (!verifyEd25519Signature(payloadBytes, signature, publicKey)) throw new Error('授权响应签名校验失败')
   const payload = JSON.parse(payloadBytes.toString('utf8')) as Record<string, unknown>
   if (String(payload.product_code || '') !== expectedProductCode) throw new Error('授权产品不匹配')
   if (String(payload.device_hash || '') !== expectedDeviceHash) throw new Error('授权不属于当前设备')

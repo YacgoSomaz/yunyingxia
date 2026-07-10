@@ -50,9 +50,12 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      devTools: false
     }
   })
+
+  mainWindow.webContents.on('devtools-opened', () => mainWindow?.webContents.closeDevTools())
 
   void mainWindow.loadFile(path.join(legacyRuntimeRoot(), 'renderer', 'dist', 'index.html'))
 }
@@ -69,7 +72,7 @@ async function boot(): Promise<void> {
   }
 
   if (app.isPackaged || commercialConfig.commercial) {
-    const integrity = verifyIntegrity(root)
+    const integrity = verifyIntegrity(root, undefined, commercialConfig.integrityPublicKey)
     if (!integrity.ok) {
       dialog.showErrorBox('万山自媒体完整性校验失败', integrity.issues.slice(0, 12).join('\n'))
       app.quit()

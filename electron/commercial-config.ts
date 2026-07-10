@@ -5,6 +5,7 @@ export interface CommercialConfig {
   commercial: boolean
   licenseServerUrl: string
   licensePublicKey: string
+  integrityPublicKey: string
   offlineGraceHours: number
   productCode: string
   appName: string
@@ -15,6 +16,7 @@ const DEFAULT_CONFIG: CommercialConfig = {
   commercial: false,
   licenseServerUrl: 'https://license.runmo.art',
   licensePublicKey: '',
+  integrityPublicKey: '',
   offlineGraceHours: 72,
   productCode: 'wanshan_media',
   appName: '万山自媒体',
@@ -40,6 +42,7 @@ export function loadCommercialConfig(appRoot: string): CommercialConfig {
     commercial: raw.commercial === true,
     licenseServerUrl: assertHttps(String(raw.licenseServerUrl || DEFAULT_CONFIG.licenseServerUrl)),
     licensePublicKey: String(raw.licensePublicKey || ''),
+    integrityPublicKey: String(raw.integrityPublicKey || ''),
     offlineGraceHours: Math.max(0, Math.min(24 * 30, Number(raw.offlineGraceHours) || DEFAULT_CONFIG.offlineGraceHours)),
     productCode: String(raw.productCode || DEFAULT_CONFIG.productCode).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 64),
     appName: String(raw.appName || DEFAULT_CONFIG.appName),

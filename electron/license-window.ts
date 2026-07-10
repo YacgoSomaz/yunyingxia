@@ -36,7 +36,7 @@ export function showLicenseWindow(preloadPath: string, service: LicenseService):
       resizable: false,
       autoHideMenuBar: true,
       title: '激活万山自媒体',
-      webPreferences: { preload: path.resolve(preloadPath), contextIsolation: true, nodeIntegration: false, sandbox: true },
+      webPreferences: { preload: path.resolve(preloadPath), contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false },
     })
     activeWindow.on('closed', () => finish(false))
     void activeWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HTML)}`)

@@ -75,7 +75,7 @@ npm start
 
 ## 商业版发布
 
-商业版构建会生成不包含 TypeScript、源码映射、测试、日志、数据库和密钥文件的发布目录，并写入 `integrity_manifest.json`。客户端启动时会校验文件完整性；商业版首次启动会通过 `https://license.runmo.art` 激活设备。
+商业版构建会生成不包含 TypeScript、源码映射、测试、日志、数据库和密钥文件的发布目录，并写入带 Ed25519 签名的 `integrity_manifest.json`。客户端启动时会校验签名、文件哈希和额外文件；商业版首次启动会通过 `https://license.runmo.art` 激活设备。
 
 安装 Inno Setup 后执行：
 
@@ -85,6 +85,7 @@ pwsh -File packaging\build\build_release.ps1 `
   -Commercial `
   -LicenseServerUrl "https://license.runmo.art" `
   -ProductCode "wanshan_media" `
+  -IntegrityPrivateKeyPath "C:\\secure\\wanshan-integrity-private.pem" `
   -LicensePublicKey $env:WANSHAN_LICENSE_PUBLIC_KEY
 ```
 

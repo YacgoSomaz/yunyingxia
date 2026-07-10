@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { verifyEd25519Signature } from './license-crypto'
 
 export interface IntegrityManifestEntry {
   sha256: string
@@ -11,6 +12,11 @@ export interface IntegrityManifest {
   version: number
   algorithm: 'sha256'
   files: Record<string, IntegrityManifestEntry>
+  signature: {
+    algorithm: 'Ed25519'
+    payload: string
+    signature: string
+  }
 }
 
 export interface IntegrityResult {
@@ -33,6 +39,10 @@ function sha256(file: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
+function base64Url(value: Buffer): string {
+  return value.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
 function allFiles(root: string): string[] {
   const result: string[] = []
   const walk = (dir: string) => {
@@ -51,7 +61,7 @@ export function hasDebuggerFlags(): boolean {
   return /(?:--inspect(?:-brk)?(?:=|\b)|--remote-debugging-port(?:=|\b))/i.test(args)
 }
 
-export function verifyIntegrity(root: string, manifestPath = path.join(root, 'integrity_manifest.json')): IntegrityResult {
+export function verifyIntegrity(root: string, manifestPath = path.join(root, 'integrity_manifest.json'), integrityPublicKey = ''): IntegrityResult {
   const issues: string[] = []
   if (hasDebuggerFlags()) issues.push('检测到调试器参数')
 
@@ -68,9 +78,27 @@ export function verifyIntegrity(root: string, manifestPath = path.join(root, 'in
     return { ok: false, issues }
   }
 
-  if (manifest.algorithm !== 'sha256' || !manifest.files || typeof manifest.files !== 'object') {
+  if (manifest.algorithm !== 'sha256' || !manifest.files || typeof manifest.files !== 'object' || !manifest.signature) {
     issues.push('完整性清单算法或文件表无效')
     return { ok: false, issues }
+  }
+
+  if (!integrityPublicKey) {
+    issues.push('缺少完整性清单公钥')
+  } else {
+    try {
+      const canonical = JSON.stringify({ version: manifest.version, algorithm: manifest.algorithm, files: manifest.files })
+      const expectedPayload = base64Url(Buffer.from(canonical, 'utf8'))
+      const signatureText = manifest.signature.signature.replace(/-/g, '+').replace(/_/g, '/')
+      const signature = Buffer.from(signatureText + '='.repeat((4 - (signatureText.length % 4)) % 4), 'base64')
+      if (manifest.signature.algorithm !== 'Ed25519' || manifest.signature.payload !== expectedPayload) {
+        issues.push('完整性清单签名载荷无效')
+      } else if (!verifyEd25519Signature(Buffer.from(canonical, 'utf8'), signature, integrityPublicKey)) {
+        issues.push('完整性清单签名校验失败')
+      }
+    } catch {
+      issues.push('完整性清单签名格式无效')
+    }
   }
 
   for (const [relative, expected] of Object.entries(manifest.files)) {
