@@ -13,6 +13,7 @@ dist-electron/
 
 # Local test artifacts and screenshots
 artifacts/
+release/stage/
 
 # Local configuration and credentials
 .env

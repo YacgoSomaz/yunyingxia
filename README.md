@@ -73,6 +73,22 @@ $env:WANSHAN_USE_MOCK = '1'
 npm start
 ```
 
+## 商业版发布
+
+商业版构建会生成不包含 TypeScript、源码映射、测试、日志、数据库和密钥文件的发布目录，并写入 `integrity_manifest.json`。客户端启动时会校验文件完整性；商业版首次启动会通过 `https://license.runmo.art` 激活设备。
+
+安装 Inno Setup 后执行：
+
+```powershell
+pwsh -File packaging\build\build_release.ps1 `
+  -Version 1.0.0 `
+  -Commercial `
+  -LicenseServerUrl "https://license.runmo.art" `
+  -LicensePublicKey $env:WANSHAN_LICENSE_PUBLIC_KEY
+```
+
+如果暂时未安装 Inno Setup，可以加 `-SkipInstaller`，脚本仍会生成并验收 `release\stage\WanshanMedia` 发布目录。安装包属于发布产物，使用 Git LFS 管理，不把用户数据、Cookie、数据库和授权私钥提交到仓库。
+
 ## 项目地址
 
 <https://github.com/YacgoSomaz/qianshanzimeiti>

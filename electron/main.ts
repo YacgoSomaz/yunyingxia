@@ -1,11 +1,27 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
+import { loadCommercialConfig } from './commercial-config'
+import { verifyIntegrity } from './integrity-verifier'
+import { LicenseService } from './license-service'
+import { showLicenseWindow } from './license-window'
 
 let mainWindow: BrowserWindow | null = null
 
+// Keep databases, license cache, cookies and generated media outside the install directory.
+if (process.env.LOCALAPPDATA) {
+  const userDataRoot = path.join(process.env.LOCALAPPDATA, 'WanshanMedia')
+  fs.mkdirSync(userDataRoot, { recursive: true })
+  app.setPath('userData', userDataRoot)
+}
+
 function legacyRuntimeRoot(): string {
-  const appRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..', '..')
+  const appRoot = app.isPackaged ? app.getAppPath() : path.resolve(__dirname, '..', '..')
   return path.join(appRoot, 'vendor', 'qianshan-runtime')
+}
+
+function appRoot(): string {
+  return app.isPackaged ? app.getAppPath() : path.resolve(__dirname, '..', '..')
 }
 
 async function startLegacyRuntime(): Promise<void> {
@@ -41,13 +57,50 @@ function createWindow(): void {
   void mainWindow.loadFile(path.join(legacyRuntimeRoot(), 'renderer', 'dist', 'index.html'))
 }
 
-app.whenReady().then(() => {
+async function boot(): Promise<void> {
+  const root = appRoot()
+  let commercialConfig
+  try {
+    commercialConfig = loadCommercialConfig(root)
+  } catch (error) {
+    dialog.showErrorBox('万山自媒体启动失败', error instanceof Error ? error.message : '商业配置无效')
+    app.quit()
+    return
+  }
+
+  if (app.isPackaged || commercialConfig.commercial) {
+    const integrity = verifyIntegrity(root)
+    if (!integrity.ok) {
+      dialog.showErrorBox('万山自媒体完整性校验失败', integrity.issues.slice(0, 12).join('\n'))
+      app.quit()
+      return
+    }
+  }
+
+  if (commercialConfig.commercial) {
+    const license = new LicenseService(commercialConfig)
+    const authorized = await license.ensureAuthorized().catch(() => null)
+    if (!authorized) {
+      const activated = await showLicenseWindow(path.join(__dirname, 'preload.js'), license)
+      if (!activated) {
+        dialog.showErrorBox('万山自媒体未激活', '请输入有效卡密后再启动商业版。')
+        app.quit()
+        return
+      }
+    }
+  }
+
   createWindow()
-  return startLegacyRuntime()
-}).then(() => {
+  await startLegacyRuntime()
+}
+
+app.whenReady().then(boot).then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((error) => {
+  dialog.showErrorBox('万山自媒体启动失败', error instanceof Error ? error.message : String(error))
+  app.quit()
 })
 
 app.on('window-all-closed', () => {

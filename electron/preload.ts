@@ -9,5 +9,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
-  publisherLogin: (accountId: number) => ipcRenderer.invoke('publisher:login', accountId)
+  publisherLogin: (accountId: number) => ipcRenderer.invoke('publisher:login', accountId),
+  activateLicense: (cardKey: string) => ipcRenderer.invoke('license:activate', cardKey)
 })

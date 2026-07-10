@@ -10,7 +10,8 @@
     "start": "\".runtime-electron\\node_modules\\electron\\dist\\electron.exe\" .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "package:release": "pwsh -NoProfile -File packaging\\build\\build_release.ps1"
   },
   "dependencies": {
     "electron": "30.5.1",
