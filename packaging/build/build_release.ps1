@@ -135,6 +135,10 @@ $installer = $null
 if (-not $SkipInstaller) {
   $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
   if (-not $iscc) {
+    $installedIscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup*', 'C:\Program Files\Inno Setup*' -Filter iscc.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($installedIscc) { $iscc = [pscustomobject]@{ Source = $installedIscc.FullName } }
+  }
+  if (-not $iscc) {
     Write-Warning '未找到 Inno Setup Compiler (iscc.exe)，已完成发布目录构建，跳过安装包生成。'
   } else {
     Write-Host "[7/7] 生成 Inno Setup 安装包"

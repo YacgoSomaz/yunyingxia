@@ -38,6 +38,8 @@ Type: files; Name: "{app}\*.pyc"
 Type: files; Name: "{app}\*.map"
 Type: files; Name: "{app}\README*"
 Type: files; Name: "{app}\*.log"
+Type: files; Name: "{app}\*.tmp"
+Type: files; Name: "{app}\*.bak"
 
 [Icons]
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\WanshanMedia.exe"; WorkingDir: "{app}"
