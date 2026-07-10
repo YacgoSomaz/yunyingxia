@@ -5,6 +5,8 @@ param(
   [string]$LicenseServerUrl = 'https://license.runmo.art',
   [string]$LicensePublicKey = '',
   [string]$ProductCode = 'wanshan_media',
+  [string]$UpdateFeedUrl = 'https://license.runmo.art/wanshan-media/updates/latest.json',
+  [string]$UpdateAssetBaseUrl = '',
   [string]$IntegrityPrivateKeyPath = '',
   [string]$OutputRoot = '',
   [switch]$SkipInstaller
@@ -45,6 +47,8 @@ Invoke-Step 'npm.cmd' @('run', 'build')
 
 $electronDist = Join-Path $ProjectRoot '.runtime-electron\node_modules\electron\dist'
 $runtimeRoot = Join-Path $ProjectRoot 'vendor\qianshan-runtime'
+$binaryRoot = Join-Path $ProjectRoot 'resources\bin'
+$binaryNames = @('ffmpeg.exe', 'ffprobe.exe', 'yt-dlp.exe')
 foreach ($required in @(
   (Join-Path $electronDist 'electron.exe'),
   (Join-Path $ProjectRoot 'dist-electron\electron\main.js'),
@@ -53,6 +57,10 @@ foreach ($required in @(
   (Join-Path $runtimeRoot 'node_modules')
 )) {
   if (-not (Test-Path $required)) { throw "缺少发布依赖: $required" }
+}
+foreach ($binaryName in $binaryNames) {
+  $binaryPath = Join-Path $binaryRoot $binaryName
+  if (-not (Test-Path $binaryPath)) { throw "缺少媒体运行组件: $binaryPath" }
 }
 
 $stageRoot = Join-Path $OutputRoot 'stage\WanshanMedia'
@@ -66,7 +74,12 @@ Copy-Item (Join-Path $electronDist '*') $stageRoot -Recurse -Force
 if (Test-Path (Join-Path $stageRoot 'electron.exe')) {
   Rename-Item (Join-Path $stageRoot 'electron.exe') 'WanshanMedia.exe'
 }
-if (Test-Path (Join-Path $appRoot 'default_app.asar')) { Remove-Item (Join-Path $appRoot 'default_app.asar') -Force }
+$stageDefaultAppArchive = Join-Path $stageRoot 'resources\default_app.asar'
+if (Test-Path $stageDefaultAppArchive) { Remove-Item $stageDefaultAppArchive -Force }
+
+$stageBinaryRoot = Join-Path $stageRoot 'resources\bin'
+New-Item $stageBinaryRoot -ItemType Directory -Force | Out-Null
+Copy-Item (Join-Path $binaryRoot '*') $stageBinaryRoot -Force
 
 Write-Host "[3/7] 复制运行所需的编译产物"
 Copy-Item (Join-Path $ProjectRoot 'package.json') $appRoot -Force
@@ -79,6 +92,7 @@ foreach ($dir in @('dist', 'renderer', 'drizzle', 'node_modules')) {
 
 Write-Host "[4/7] 写入商业配置并清理源码/开发文件"
 $manifestTool = Join-Path $ProjectRoot 'packaging\build\manifest-tool.cjs'
+$asarTool = Join-Path $ProjectRoot 'packaging\build\package-app.cjs'
 $temporaryIntegrityKey = $false
 if (-not $IntegrityPrivateKeyPath) {
   $IntegrityPrivateKeyPath = Join-Path $env:TEMP "wanshan-integrity-$([guid]::NewGuid().ToString('N')).pem"
@@ -95,6 +109,7 @@ $commercialConfig = [ordered]@{
   licensePublicKey = if ($Commercial) { $LicensePublicKey } else { '' }
   integrityPublicKey = $integrityPublicKey
   productCode = $ProductCode
+  updateFeedUrl = $UpdateFeedUrl
   offlineGraceHours = 72
   appName = '万山自媒体'
   version = $Version
@@ -132,23 +147,28 @@ $manifestObject |
   Set-Content (Join-Path $appRoot 'integrity_manifest.json') -Encoding UTF8
 Invoke-Step 'node.exe' @($manifestTool, 'sign', (Join-Path $appRoot 'integrity_manifest.json'), $IntegrityPrivateKeyPath)
 if ($temporaryIntegrityKey -and (Test-Path $IntegrityPrivateKeyPath)) { Remove-Item $IntegrityPrivateKeyPath -Force }
+$manifestPath = Join-Path $appRoot 'integrity_manifest.json'
+$manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+$manifestCount = @($manifest.files.psobject.Properties).Count
+if ($manifestCount -lt 10) { throw '完整性清单文件数量异常，拒绝发布' }
 
-Write-Host "[6/7] 验收发布目录"
+Write-Host "[6/7] 打包应用为 app.asar"
+$appArchive = Join-Path $stageRoot 'resources\app.asar'
+Invoke-Step 'node.exe' @($asarTool, $appRoot, $appArchive)
+Remove-Item $appRoot -Recurse -Force
+
+Write-Host "[7/7] 验收发布目录"
 $requiredRelease = @(
-  'resources/app/package.json',
-  'resources/app/commercial-config.json',
-  'resources/app/integrity_manifest.json',
-  'resources/app/dist-electron/electron/main.js',
-  'resources/app/vendor/qianshan-runtime/dist/server.js',
-  'resources/app/vendor/qianshan-runtime/renderer/dist/index.html',
+  'resources/app.asar',
+  'resources/app.asar.unpacked/vendor/qianshan-runtime/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node',
+  'resources/bin/ffmpeg.exe',
+  'resources/bin/ffprobe.exe',
+  'resources/bin/yt-dlp.exe',
   'WanshanMedia.exe'
 )
 foreach ($relative in $requiredRelease) {
   if (-not (Test-Path (Join-Path $stageRoot $relative))) { throw "发布文件缺失: $relative" }
 }
-$manifest = Get-Content (Join-Path $appRoot 'integrity_manifest.json') -Raw | ConvertFrom-Json
-$manifestCount = @($manifest.files.psobject.Properties).Count
-if ($manifestCount -lt 10) { throw '完整性清单文件数量异常，拒绝发布' }
 
 $installer = $null
 if (-not $SkipInstaller) {
@@ -160,7 +180,7 @@ if (-not $SkipInstaller) {
   if (-not $iscc) {
     Write-Warning '未找到 Inno Setup Compiler (iscc.exe)，已完成发布目录构建，跳过安装包生成。'
   } else {
-    Write-Host "[7/7] 生成 Inno Setup 安装包"
+    Write-Host "生成 Inno Setup 安装包"
     $installer = Join-Path $OutputRoot "WanshanMediaSetup_$Version.exe"
     Invoke-Step $iscc.Source @(
       "/DMyAppVersion=$Version",
@@ -168,7 +188,17 @@ if (-not $SkipInstaller) {
       "/DOutputDir=$OutputRoot",
       (Join-Path $ProjectRoot 'packaging\installer\WanshanMedia.iss')
     )
-    if (-not (Test-Path $installer)) { throw "安装包未生成: $installer" }
+     if (-not (Test-Path $installer)) { throw "安装包未生成: $installer" }
+    Invoke-Step 'node.exe' @(
+      (Join-Path $ProjectRoot 'packaging\build\write-update-manifest.cjs'),
+      $OutputRoot,
+      $installer,
+      $Version,
+      $UpdateAssetBaseUrl
+    )
+    foreach ($updateManifest in @('latest.json', 'latest.yml')) {
+      if (-not (Test-Path (Join-Path $OutputRoot $updateManifest))) { throw "更新清单未生成: $updateManifest" }
+    }
   }
 }
 
@@ -176,6 +206,6 @@ if (-not $SkipInstaller) {
   version = $Version
   commercial = [bool]$Commercial
   stage = $stageRoot
-  manifest = Join-Path $appRoot 'integrity_manifest.json'
+  manifest = "$appArchive::/integrity_manifest.json"
   installer = $installer
 } | ConvertTo-Json

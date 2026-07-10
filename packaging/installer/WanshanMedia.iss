@@ -33,6 +33,9 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 ; 覆盖安装前清理旧的应用文件。用户数据位于 %LOCALAPPDATA%，不在安装目录。
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\resources\app"
+Type: files; Name: "{app}\resources\app.asar"
+Type: filesandordirs; Name: "{app}\resources\app.asar.unpacked"
+Type: filesandordirs; Name: "{app}\resources\bin"
 Type: files; Name: "{app}\*.py"
 Type: files; Name: "{app}\*.pyc"
 Type: files; Name: "{app}\*.map"

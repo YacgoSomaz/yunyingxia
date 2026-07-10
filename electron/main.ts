@@ -5,6 +5,7 @@ import { loadCommercialConfig } from './commercial-config'
 import { verifyIntegrity } from './integrity-verifier'
 import { LicenseService } from './license-service'
 import { showLicenseWindow } from './license-window'
+import { registerUpdateService } from './update-service'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -94,6 +95,7 @@ async function boot(): Promise<void> {
   }
 
   createWindow()
+  registerUpdateService(() => mainWindow, commercialConfig)
   await startLegacyRuntime()
 }
 

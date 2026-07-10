@@ -10,6 +10,7 @@ export interface CommercialConfig {
   productCode: string
   appName: string
   version: string
+  updateFeedUrl: string
 }
 
 const DEFAULT_CONFIG: CommercialConfig = {
@@ -21,6 +22,7 @@ const DEFAULT_CONFIG: CommercialConfig = {
   productCode: 'wanshan_media',
   appName: '万山自媒体',
   version: '0.0.0-dev',
+  updateFeedUrl: 'https://license.runmo.art/wanshan-media/updates/latest.json',
 }
 
 function assertHttps(url: string): string {
@@ -29,6 +31,15 @@ function assertHttps(url: string): string {
     throw new Error('商业授权服务器必须使用 HTTPS')
   }
   return parsed.toString().replace(/\/$/, '')
+}
+
+function normalizeOptionalUpdateUrl(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const parsed = new URL(trimmed)
+  if (parsed.protocol === 'https:' || parsed.protocol === 'file:') return parsed.toString()
+  if (parsed.protocol === 'http:' && ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname)) return parsed.toString()
+  throw new Error('更新源必须使用 HTTPS')
 }
 
 export function loadCommercialConfig(appRoot: string): CommercialConfig {
@@ -47,6 +58,7 @@ export function loadCommercialConfig(appRoot: string): CommercialConfig {
     productCode: String(raw.productCode || DEFAULT_CONFIG.productCode).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 64),
     appName: String(raw.appName || DEFAULT_CONFIG.appName),
     version: String(raw.version || DEFAULT_CONFIG.version),
+    updateFeedUrl: normalizeOptionalUpdateUrl(String(raw.updateFeedUrl || DEFAULT_CONFIG.updateFeedUrl)),
   }
 
   if (config.commercial && !config.licensePublicKey.trim()) {

@@ -16,6 +16,10 @@ export interface LicenseState {
   lastCheckedAt: number
 }
 
+export function buildLicenseRequestBody(body: Record<string, unknown>, productCode: string): Record<string, unknown> {
+  return { ...body, product_code: productCode }
+}
+
 function epoch(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value > 10_000_000_000 ? Math.floor(value / 1000) : Math.floor(value)
   if (typeof value === 'string' && /^\d+$/.test(value)) return epoch(Number(value))
@@ -124,7 +128,11 @@ export class LicenseService {
   async activate(cardKey: string): Promise<LicenseState> {
     const key = String(cardKey || '').trim()
     if (key.length < 4 || key.length > 128) throw new Error('卡密格式无效')
-    const body = await this.post('activate', { card_key: key.toUpperCase(), device_hash: this.deviceHash(), app_version: this.config.version }, key.toUpperCase())
+    const body = await this.post(
+      'activate',
+      buildLicenseRequestBody({ card_key: key.toUpperCase(), device_hash: this.deviceHash(), app_version: this.config.version }, this.config.productCode),
+      key.toUpperCase(),
+    )
     const state = this.normalize(body)
     if (state.status !== 'active' || !state.activationId || !state.refreshToken) throw new Error('授权服务返回的授权状态无效')
     this.writeCache(state)
@@ -132,12 +140,16 @@ export class LicenseService {
   }
 
   async refresh(state: LicenseState): Promise<LicenseState> {
-    const body = await this.post('refresh', {
-      activation_id: state.activationId,
-      refresh_token: state.refreshToken,
-      device_hash: this.deviceHash(),
-      app_version: this.config.version,
-    }, state.refreshToken)
+    const body = await this.post(
+      'refresh',
+      buildLicenseRequestBody({
+        activation_id: state.activationId,
+        refresh_token: state.refreshToken,
+        device_hash: this.deviceHash(),
+        app_version: this.config.version,
+      }, this.config.productCode),
+      state.refreshToken,
+    )
     const refreshed = this.normalize(body, state)
     this.writeCache(refreshed)
     return refreshed

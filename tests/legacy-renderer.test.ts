@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 const root = process.cwd()
 
 describe('legacy renderer migration', () => {
-  it('loads the copied original renderer through a preload without auth or updater bridges', () => {
+  it('loads the copied original renderer through a preload without the old login bridge', () => {
     const renderer = join(root, 'vendor', 'qianshan-runtime', 'renderer', 'dist')
     expect(existsSync(join(renderer, 'index.html'))).toBe(true)
     expect(existsSync(join(renderer, 'assets', 'index-BponW6ps.js'))).toBe(true)
@@ -17,7 +17,8 @@ describe('legacy renderer migration', () => {
     const main = readFileSync(join(root, 'electron', 'main.ts'), 'utf8')
     expect(preload).toContain("'electronAPI'")
     expect(preload).not.toContain('auth:')
-    expect(preload).not.toContain('update:')
+    expect(preload).toContain('update:')
+    expect(preload).toContain('onDownloaded')
     expect(main).toContain("'qianshan-runtime'")
   })
 })

@@ -75,7 +75,7 @@ npm start
 
 ## 商业版发布
 
-商业版构建会生成不包含 TypeScript、源码映射、测试、日志、数据库和密钥文件的发布目录，并写入带 Ed25519 签名的 `integrity_manifest.json`。客户端启动时会校验签名、文件哈希和额外文件；商业版首次启动会通过 `https://license.runmo.art` 激活设备。
+商业版构建会生成不包含 TypeScript、源码映射、测试、日志、数据库和密钥文件的发布目录，并将应用代码收纳到 Electron `app.asar` 包中。ASAR 是打包和提高逆向门槛，不是密码学加密；真正的授权安全依靠服务端签发、客户端 Ed25519 验签和启动时完整性校验。客户端会校验签名、文件哈希和额外文件；商业版首次启动会通过 `https://license.runmo.art` 激活设备。
 
 安装 Inno Setup 后执行：
 
@@ -85,9 +85,13 @@ pwsh -File packaging\build\build_release.ps1 `
   -Commercial `
   -LicenseServerUrl "https://license.runmo.art" `
   -ProductCode "wanshan_media" `
+  -UpdateFeedUrl "https://license.runmo.art/wanshan-media/updates/latest.json" `
+  -UpdateAssetBaseUrl "https://你的COS或OSS域名/releases" `
   -IntegrityPrivateKeyPath "C:\\secure\\wanshan-integrity-private.pem" `
   -LicensePublicKey $env:WANSHAN_LICENSE_PUBLIC_KEY
 ```
+
+更新链路面向国内用户：客户端默认只访问 `https://license.runmo.art/wanshan-media/updates/latest.json` 获取很小的版本清单；安装包大文件应通过 `-UpdateAssetBaseUrl` 指向腾讯云 COS、阿里云 OSS 或国内 CDN 的 HTTPS 地址，避免让 3M VPS 直接承载下载流量。`latest.json` 和 `latest.yml` 会自动写入安装包 SHA512，客户端下载后必须校验通过才会安装。
 
 如果暂时未安装 Inno Setup，可以加 `-SkipInstaller`，脚本仍会生成并验收 `release\stage\WanshanMedia` 发布目录。安装包属于发布产物，使用 Git LFS 管理，不把用户数据、Cookie、数据库和授权私钥提交到仓库。
 

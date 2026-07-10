@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+function onUpdate(channel: string, listener: (payload: unknown) => void): () => void {
+  const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown) => listener(payload)
+  ipcRenderer.on(channel, wrapped)
+  return () => ipcRenderer.removeListener(channel, wrapped)
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   selectFile: (options: unknown) => ipcRenderer.invoke('dialog:selectFile', options),
   selectFiles: (options: unknown) => ipcRenderer.invoke('dialog:selectFiles', options),
@@ -10,5 +16,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   publisherLogin: (accountId: number) => ipcRenderer.invoke('publisher:login', accountId),
-  activateLicense: (cardKey: string) => ipcRenderer.invoke('license:activate', cardKey)
+  activateLicense: (cardKey: string) => ipcRenderer.invoke('license:activate', cardKey),
+  update: {
+    checkNow: () => ipcRenderer.invoke('update:check'),
+    installNow: () => ipcRenderer.invoke('update:install'),
+    onChecking: (listener: (payload: unknown) => void) => onUpdate('update:checking', listener),
+    onAvailable: (listener: (payload: unknown) => void) => onUpdate('update:available', listener),
+    onNotAvailable: (listener: (payload: unknown) => void) => onUpdate('update:not-available', listener),
+    onProgress: (listener: (payload: unknown) => void) => onUpdate('update:progress', listener),
+    onDownloaded: (listener: (payload: unknown) => void) => onUpdate('update:downloaded', listener),
+    onError: (listener: (payload: unknown) => void) => onUpdate('update:error', listener)
+  }
 })
