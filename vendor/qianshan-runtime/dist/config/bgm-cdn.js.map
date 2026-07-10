@@ -1,0 +1,1 @@
+{"version":3,"file":"bgm-cdn.js","sourceRoot":"","sources":["../../src/config/bgm-cdn.ts"],"names":[],"mappings":";AAAA;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;GAkCG;;;AAUH,gEAEC;AAVD,4BAA4B;AAC5B,sDAAsD;AACtD,4CAA4C;AAC5C,mEAAmE;AACtD,QAAA,wBAAwB,GACnC,mEAAmE,CAAC;AAEtE,0CAA0C;AAC1C,SAAgB,0BAA0B,CAAC,SAAkB;IAC3D,OAAO,CAAC,SAAS,IAAI,EAAE,CAAC,CAAC,IAAI,EAAE,IAAI,gCAAwB,CAAC;AAC9D,CAAC"}

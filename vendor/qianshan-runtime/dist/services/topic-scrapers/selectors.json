@@ -1,0 +1,78 @@
+{
+    "_comment": "各平台 DOM 抓取选择器配置。页面改版后只改这里，不动 TS 代码。",
+    "douyin": {
+        "ready": [
+            "[class*='InspirationItem']",
+            "[class*='topic-item']",
+            "[class*='HotTopic']",
+            "[class*='hot-list'] a",
+            "a[href*='/inspiration/topic/']"
+        ],
+        "items": [
+            "[class*='InspirationItem']",
+            "[class*='HotTopic']",
+            "[class*='topic-item']",
+            "a[href*='/inspiration/topic/']"
+        ],
+        "title": ["[class*='title']", "[class*='name']", "h3", "h4"],
+        "heatPattern": "(?:热度|指数|热搜指数|播放)[\\s::]*([0-9.wkWK万]+)",
+        "categories": ["时尚", "美食", "科技", "家居", "美妆", "职场", "旅行", "育儿", "健身", "情感", "游戏", "搞笑", "知识", "生活", "商业", "娱乐", "时事"]
+    },
+    "xiaohongshu": {
+        "ready": [
+            "[class*='topic-list']",
+            "[class*='TopicList']",
+            "[class*='topic-item']",
+            "[class*='hot-topic']",
+            "a[href*='/topic/']"
+        ],
+        "items": [
+            "[class*='topic-item']",
+            "[class*='TopicItem']",
+            "[class*='hot-topic']",
+            "a[href*='/topic/']"
+        ],
+        "title": ["[class*='name']", "[class*='title']", "h3", "h4"],
+        "heatPattern": "([0-9.]+)\\s*(w|万|k|亿)\\s*(?:浏览|讨论|笔记)",
+        "categories": ["家居", "美妆", "穿搭", "美食", "母婴", "好物", "职场", "旅行", "护肤", "减脂", "情感", "学习", "时尚", "健身"]
+    },
+    "kuaishou": {
+        "ready": [
+            "[class*='inspiration']",
+            "[class*='topic']",
+            "[class*='hot-item']",
+            "a[href*='/hot_list']"
+        ],
+        "items": [
+            "[class*='hot-item']",
+            "[class*='topic-item']",
+            "[class*='inspiration-item']",
+            "[class*='HotList'] li",
+            "a[href*='/hot_list/']"
+        ],
+        "title": ["[class*='title']", "[class*='name']", "h3", "h4", "span"],
+        "heatPattern": "([0-9.]+)\\s*(w|万|k|亿)",
+        "categories": ["美食", "搞笑", "生活", "情感", "游戏", "音乐", "舞蹈", "剧情", "汽车", "宠物", "知识", "运动", "三农", "时尚"]
+    },
+    "weixin": {
+        "ready": [
+            "[class*='topic']",
+            "[class*='hot-event']",
+            "[class*='recommend-topic']",
+            "[class*='TopicItem']",
+            ".post-container",
+            "[class*='post-wrap']"
+        ],
+        "items": [
+            "[class*='topic-item']",
+            "[class*='TopicItem']",
+            "[class*='hot-event']",
+            "[class*='recommend-topic'] li",
+            "a[href*='/topic/']"
+        ],
+        "title": ["[class*='title']", "[class*='name']", "h3", "h4", "span"],
+        "heatPattern": "([0-9.]+)\\s*(w|万|k|亿)",
+        "categories": ["时事", "财经", "科技", "生活", "情感", "健康", "教育", "娱乐", "美食", "旅游", "职场"],
+        "xhrUrlKeywords": ["hot", "topic", "trend", "hotspot", "inspire", "recommend"]
+    }
+}

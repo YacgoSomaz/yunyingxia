@@ -1,0 +1,34 @@
+{
+  "name": "wanshan-media",
+  "version": "0.1.0",
+  "private": true,
+  "description": "万山自媒体 - 本地优先的 AI 文案工作台",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "\".runtime-electron\\node_modules\\electron\\dist\\electron.exe\" .",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "start": "\".runtime-electron\\node_modules\\electron\\dist\\electron.exe\" .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "electron": "30.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.2",
+    "vitest": "^3.0.8",
+    "wait-on": "^8.0.2"
+  }
+}
