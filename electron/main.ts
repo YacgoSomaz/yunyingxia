@@ -5,6 +5,7 @@ import { loadCommercialConfig } from './commercial-config'
 import { verifyIntegrity } from './integrity-verifier'
 import { LicenseService } from './license-service'
 import { showLicenseWindow } from './license-window'
+import { seedLegacyRuntimeAssets } from './legacy-seed'
 import { registerUpdateService } from './update-service'
 
 let mainWindow: BrowserWindow | null = null
@@ -36,6 +37,8 @@ async function startLegacyRuntime(): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { registerIPC } = require(path.join(root, 'dist', 'ipc.js')) as { registerIPC(window: BrowserWindow): void }
   await startServer()
+  const seedResult = await seedLegacyRuntimeAssets(root)
+  console.info('[Wanshan] Legacy runtime seeds:', seedResult)
   if (mainWindow) registerIPC(mainWindow)
 }
 
