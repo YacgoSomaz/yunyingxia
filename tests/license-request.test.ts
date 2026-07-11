@@ -3,11 +3,11 @@ import { readFileSync } from 'node:fs'
 import { buildLicenseRequestBody, LICENSE_REFRESH_INTERVAL_SECONDS, LicenseHttpError } from '../electron/license-service'
 
 describe('license request body', () => {
-  it('includes the Wanshan product code in activation requests', () => {
-    expect(buildLicenseRequestBody({ card_key: 'TEST', device_hash: 'device' }, 'wanshan_media')).toEqual({
+  it('includes the Wanshan self-media product code in activation requests', () => {
+    expect(buildLicenseRequestBody({ card_key: 'TEST', device_hash: 'device' }, 'wanshan_zimeiti')).toEqual({
       card_key: 'TEST',
       device_hash: 'device',
-      product_code: 'wanshan_media',
+      product_code: 'wanshan_zimeiti',
     })
   })
 

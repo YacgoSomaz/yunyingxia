@@ -4,7 +4,7 @@ param(
   [switch]$Commercial,
   [string]$LicenseServerUrl = 'https://license.runmo.art',
   [string]$LicensePublicKey = '',
-  [string]$ProductCode = 'wanshan_media',
+  [string]$ProductCode = 'wanshan_zimeiti',
   [string]$UpdateFeedUrl = 'https://license.runmo.art/wanshan-media/updates/latest.json',
   [string]$UpdateAssetBaseUrl = '',
   [string]$IntegrityPrivateKeyPath = '',

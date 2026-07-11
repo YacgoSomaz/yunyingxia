@@ -1,13 +1,13 @@
 {
-  "version": "0.1.6",
-  "releaseDate": "2026-07-11T08:25:59.347Z",
-  "path": "WanshanMediaSetup_0.1.6.exe",
-  "sha512": "8Csz51jZoyz4mUI4umNt0wpWLgbyWaasXd5maKsCop1rrLF9pD3L/3ZFL2BRb7gTfYK8hput6jqS1ZLGjoV9PA==",
+  "version": "0.1.7",
+  "releaseDate": "2026-07-11T16:32:26.562Z",
+  "path": "WanshanMediaSetup_0.1.7.exe",
+  "sha512": "kY1vQDZciGXyt/LNma0DmebyuQzGtpIsIkrAHcaAPlQ1aQULz13Be1Jd2S4AxXw/za6cQ8Fur4m68pw3elWL6w==",
   "files": [
     {
-      "url": "WanshanMediaSetup_0.1.6.exe",
-      "sha512": "8Csz51jZoyz4mUI4umNt0wpWLgbyWaasXd5maKsCop1rrLF9pD3L/3ZFL2BRb7gTfYK8hput6jqS1ZLGjoV9PA==",
-      "size": 173013342
+      "url": "WanshanMediaSetup_0.1.7.exe",
+      "sha512": "kY1vQDZciGXyt/LNma0DmebyuQzGtpIsIkrAHcaAPlQ1aQULz13Be1Jd2S4AxXw/za6cQ8Fur4m68pw3elWL6w==",
+      "size": 173014523
     }
   ]
 }

@@ -19,7 +19,7 @@ const DEFAULT_CONFIG: CommercialConfig = {
   licensePublicKey: '',
   integrityPublicKey: '',
   offlineGraceHours: 72,
-  productCode: 'wanshan_media',
+  productCode: 'wanshan_zimeiti',
   appName: '万山自媒体',
   version: '0.0.0-dev',
   updateFeedUrl: 'https://license.runmo.art/wanshan-media/updates/latest.json',
