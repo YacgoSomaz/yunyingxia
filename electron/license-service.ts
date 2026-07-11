@@ -5,6 +5,9 @@ import path from 'node:path'
 import type { CommercialConfig } from './commercial-config'
 import { verifyLicenseDocument } from './license-crypto'
 
+export const LICENSE_REFRESH_INTERVAL_SECONDS = 60
+const AUTHORITATIVE_REJECTION_STATUSES = new Set([400, 401, 403, 404, 409, 410])
+
 export interface LicenseState {
   status: 'active' | 'expired' | 'blocked'
   activationId: string
@@ -14,6 +17,18 @@ export interface LicenseState {
   expiresAt: number
   offlineGraceUntil: number
   lastCheckedAt: number
+}
+
+export class LicenseHttpError extends Error {
+  readonly status: number
+  readonly authoritative: boolean
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'LicenseHttpError'
+    this.status = status
+    this.authoritative = AUTHORITATIVE_REJECTION_STATUSES.has(status)
+  }
 }
 
 export function buildLicenseRequestBody(body: Record<string, unknown>, productCode: string): Record<string, unknown> {
@@ -77,6 +92,14 @@ export class LicenseService {
     fs.writeFileSync(this.cachePath, JSON.stringify({ encrypted }), { encoding: 'utf8', mode: 0o600 })
   }
 
+  clearCache(): void {
+    try {
+      if (fs.existsSync(this.cachePath)) fs.rmSync(this.cachePath, { force: true })
+    } catch {
+      // Cache cleanup should not mask the authorization failure that triggered it.
+    }
+  }
+
   private async post(endpoint: string, body: Record<string, unknown>, signingSecret: string): Promise<Record<string, unknown>> {
     const url = new URL(`${this.config.licenseServerUrl}/v1/${endpoint}`)
     const canonical = JSON.stringify(Object.keys(body).sort().reduce<Record<string, unknown>>((result, key) => {
@@ -103,8 +126,12 @@ export class LicenseService {
       signal: AbortSignal.timeout(12_000),
     })
     const data = (await response.json().catch(() => ({}))) as Record<string, unknown>
-    if (!response.ok) throw new Error(String(data.detail || data.message || `授权服务 HTTP ${response.status}`))
+    if (!response.ok) throw new LicenseHttpError(response.status, String(data.detail || data.message || `授权服务 HTTP ${response.status}`))
     return data
+  }
+
+  private isAuthoritativeRejection(error: unknown): boolean {
+    return error instanceof LicenseHttpError && error.authoritative
   }
 
   private normalize(body: Record<string, unknown>, previous?: LicenseState): LicenseState {
@@ -140,19 +167,24 @@ export class LicenseService {
   }
 
   async refresh(state: LicenseState): Promise<LicenseState> {
-    const body = await this.post(
-      'refresh',
-      buildLicenseRequestBody({
-        activation_id: state.activationId,
-        refresh_token: state.refreshToken,
-        device_hash: this.deviceHash(),
-        app_version: this.config.version,
-      }, this.config.productCode),
-      state.refreshToken,
-    )
-    const refreshed = this.normalize(body, state)
-    this.writeCache(refreshed)
-    return refreshed
+    try {
+      const body = await this.post(
+        'refresh',
+        buildLicenseRequestBody({
+          activation_id: state.activationId,
+          refresh_token: state.refreshToken,
+          device_hash: this.deviceHash(),
+          app_version: this.config.version,
+        }, this.config.productCode),
+        state.refreshToken,
+      )
+      const refreshed = this.normalize(body, state)
+      this.writeCache(refreshed)
+      return refreshed
+    } catch (error) {
+      if (this.isAuthoritativeRejection(error)) this.clearCache()
+      throw error
+    }
   }
 
   async ensureAuthorized(): Promise<LicenseState | null> {
@@ -160,16 +192,48 @@ export class LicenseService {
     const cached = this.readCache()
     const now = Math.floor(Date.now() / 1000)
     if (cached?.status === 'active' && (!cached.expiresAt || cached.expiresAt > now)) {
-      if (now - cached.lastCheckedAt < 12 * 3600) return cached
       try {
         return await this.refresh(cached)
-      } catch {
+      } catch (error) {
+        if (this.isAuthoritativeRejection(error)) return null
         if (now <= cached.offlineGraceUntil) return cached
       }
+    } else if (cached) {
+      this.clearCache()
     }
     const envKey = process.env.WANSHAN_LICENSE_KEY?.trim()
     if (envKey) return this.activate(envKey)
     return null
+  }
+
+  startBackgroundRefresh(onInvalid: (error: Error) => void): NodeJS.Timeout | null {
+    if (!this.config.commercial) return null
+    const run = async () => {
+      const cached = this.readCache()
+      const now = Math.floor(Date.now() / 1000)
+      if (!cached || cached.status !== 'active' || (cached.expiresAt && cached.expiresAt <= now)) {
+        this.clearCache()
+        onInvalid(new Error('授权已过期，请重新激活。'))
+        return
+      }
+      if (now - cached.lastCheckedAt < LICENSE_REFRESH_INTERVAL_SECONDS) return
+      try {
+        await this.refresh(cached)
+      } catch (error) {
+        if (this.isAuthoritativeRejection(error)) {
+          onInvalid(error instanceof Error ? error : new Error('授权已失效，请重新激活。'))
+          return
+        }
+        if (now > cached.offlineGraceUntil) {
+          this.clearCache()
+          onInvalid(new Error('授权离线宽限期已结束，请联网重新校验。'))
+        }
+      }
+    }
+    const timer = setInterval(() => { void run() }, LICENSE_REFRESH_INTERVAL_SECONDS * 1000)
+    timer.unref?.()
+    void run()
+    return timer
   }
 
   publicView(state: LicenseState | null): Omit<LicenseState, 'refreshToken'> | null {

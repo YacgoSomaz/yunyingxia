@@ -48,4 +48,16 @@ describe("bundled media binaries", () => {
     expect(buildScript).toContain("sharp-win32-x64.node");
     expect(installerScript).toContain("{app}\\resources\\app.asar.unpacked");
   });
+
+  it("rejects source directories and native build source files from commercial packages", () => {
+    const buildScript = readFileSync(
+      join(projectRoot, "packaging", "build", "build_release.ps1"),
+      "utf8",
+    );
+
+    expect(buildScript).toContain("^(src|test|tests|__tests__|\\.git)$");
+    expect(buildScript).toContain("*.cpp");
+    expect(buildScript).toContain("forbiddenDirs");
+    expect(buildScript).toContain("源码/测试目录");
+  });
 });

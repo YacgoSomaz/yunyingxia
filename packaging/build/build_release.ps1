@@ -116,12 +116,15 @@ $commercialConfig = [ordered]@{
 }
 $commercialConfig | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $appRoot 'commercial-config.json') -Encoding UTF8
 
-$removePatterns = @('*.map', '*.ts', '*.tsx', '*.py', '*.pyc', '*.md', '*.log', '*.db', '*.sqlite', '*.sqlite3', '*.pem', '*.key')
+$removePatterns = @(
+  '*.map', '*.ts', '*.tsx', '*.py', '*.pyc', '*.md', '*.log', '*.db', '*.sqlite', '*.sqlite3', '*.pem', '*.key',
+  '*.c', '*.cc', '*.cpp', '*.cxx', '*.h', '*.hh', '*.hpp'
+)
 foreach ($pattern in $removePatterns) {
   Get-ChildItem $appRoot -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue | Remove-Item -Force
 }
 Get-ChildItem $appRoot -Recurse -Directory -Force -ErrorAction SilentlyContinue |
-  Where-Object { $_.Name -match '^(test|tests|__tests__|\.git)$' } |
+  Where-Object { $_.Name -match '^(src|test|tests|__tests__|\.git)$' } |
   Sort-Object FullName -Descending |
   Remove-Item -Recurse -Force
 Get-ChildItem $appRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
@@ -129,9 +132,13 @@ Get-ChildItem $appRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
   Remove-Item -Force
 
 $forbidden = Get-ChildItem $appRoot -Recurse -File -Force | Where-Object {
-  $_.Extension -match '^\.(map|ts|tsx|py|pyc|db|sqlite|sqlite3|pem|key)$' -or $_.Name -match '^\.env'
+  $_.Extension -match '^\.(map|ts|tsx|py|pyc|db|sqlite|sqlite3|pem|key|c|cc|cpp|cxx|h|hh|hpp)$' -or $_.Name -match '^\.env'
 }
 if ($forbidden) { throw "发布目录仍包含敏感/源码文件: $($forbidden.FullName -join ', ')" }
+$forbiddenDirs = Get-ChildItem $appRoot -Recurse -Directory -Force | Where-Object {
+  $_.Name -match '^(src|test|tests|__tests__|\.git)$'
+}
+if ($forbiddenDirs) { throw "发布目录仍包含源码/测试目录: $($forbiddenDirs.FullName -join ', ')" }
 
 Write-Host "[5/7] 生成 integrity_manifest.json"
 $entries = [ordered]@{}

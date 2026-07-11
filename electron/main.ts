@@ -9,6 +9,7 @@ import { seedLegacyRuntimeAssets } from './legacy-seed'
 import { registerUpdateService } from './update-service'
 
 let mainWindow: BrowserWindow | null = null
+let licenseRefreshTimer: NodeJS.Timeout | null = null
 
 // Keep databases, license cache, cookies and generated media outside the install directory.
 if (process.env.LOCALAPPDATA) {
@@ -95,6 +96,14 @@ async function boot(): Promise<void> {
         return
       }
     }
+    licenseRefreshTimer = license.startBackgroundRefresh((error) => {
+      if (licenseRefreshTimer) {
+        clearInterval(licenseRefreshTimer)
+        licenseRefreshTimer = null
+      }
+      dialog.showErrorBox('万山自媒体授权已失效', error.message || '授权已失效，请重新激活。')
+      app.quit()
+    })
   }
 
   createWindow()
