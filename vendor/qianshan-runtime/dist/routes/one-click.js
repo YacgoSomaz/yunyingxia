@@ -9,9 +9,11 @@ const logger_1 = require("../utils/logger");
 const paths_1 = require("../utils/paths");
 const validate_1 = require("../utils/validate");
 const ai_video_gen_1 = require("../services/ai-video-gen");
+const jimeng_cli_1 = require("../services/jimeng-cli");
 const router = (0, express_1.Router)();
 const ok = (data) => ({ success: true, data });
 const fail = (err) => ({ success: false, error: String(err?.message || err) });
+const AiVideoProviderSchema = zod_1.z.preprocess((v) => (0, ai_video_gen_1.normalizeVideoProvider)(v), zod_1.z.enum(['cloud', 'lingyaai', 'jimeng_cli']));
 // ─── Schemas ───
 const AnalyzeSchema = zod_1.z.object({
     scriptText: zod_1.z.string().min(1).max(2000),
@@ -192,6 +194,20 @@ router.delete('/voices/custom/:id', async (req, res) => {
 router.get('/subtitle-styles', (_req, res) => {
     res.json(ok(one_click_1.oneClick.listSubtitleStyles()));
 });
+// 语音就绪预检:前端点"生成视频"前调用,探测云端 TTS 是否可用。
+// 不只查配置存在性 —— 会用 ?voiceId= 指定的音色真实合成 4 个字探活(成功缓存 5min),
+// key 改错 / model 不存在 / MiniMax 未开通都在这里暴露。
+// ready=false 意味着合成时必然降级 Edge 免费机械音 → 前端当场拦截提示,
+// 避免用户等完整片才发现是自己配置问题(还以为工具音质差)。
+router.get('/voice-readiness', async (req, res) => {
+    try {
+        const voiceId = typeof req.query.voiceId === 'string' ? req.query.voiceId : undefined;
+        res.json(ok(await one_click_1.oneClick.checkVoiceReadiness(voiceId)));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
 // 文案 → 分镜（老版，保留兼容）
 router.post('/analyze', (0, validate_1.validateBody)(AnalyzeSchema), async (req, res) => {
     try {
@@ -356,27 +372,37 @@ router.post('/regen-scene-prompt', (0, validate_1.validateBody)(RegenScenePrompt
         const aspectHint = aspect === '9:16' ? '竖版构图（适合手机短视频）' :
             aspect === '16:9' ? '横版构图（适合横屏视频）' :
                 '正方形构图';
+        const hasCurrentPrompt = !!currentPrompt?.trim();
         // ⚠️ 跟 scene-enrich.ts 主路径保持一致：四段式不写"风格段"，风格由系统追加
-        const userPrompt = `给你一段短视频口播文案，请生成一段【${isVideoMode ? 'AI 视频' : 'AI 图片'}】生成 prompt。
+        // 有 currentPrompt 时，这个按钮的语义是"保真优化"，不是重新创作。否则容易删掉原 prompt
+        // 里的数字、品牌、Logo、画面布局等关键元素。
+        const userPrompt = `${hasCurrentPrompt
+            ? `请在【当前 prompt】基础上做保真优化，输出一段更清晰、更适合【${isVideoMode ? 'AI 视频' : 'AI 图片'}】生成的 prompt。口播文案只用于理解语境，不要推翻当前 prompt 的画面设定。`
+            : `给你一段短视频口播文案，请生成一段【${isVideoMode ? 'AI 视频' : 'AI 图片'}】生成 prompt。`}
 ${topic ? `\n## 整支视频主题\n${topic}\n` : ''}
 ## 输出要求
-1. 中文，30-60 字（不含末尾系统追加的风格段）
+1. 中文，${hasCurrentPrompt ? '80-180' : '60-140'} 字（不含末尾系统追加的风格段），不要为了变短而概括关键画面
 2. 严格四段式：镜头类型 + 主体（年龄/族裔/衣着）+ 动作 + 环境
-3. **严禁自己写"XX风格""XX摄影""电影级""4K""浅景深""艺术风"等风格词**——风格由系统统一追加，你写了会跟系统追加的风格打架
-4. 中国语境优先（亚裔人物、汉字招牌、中式街景等）
-5. 比例：${aspectHint}
-${isVideoMode ? '6. 描述要包含动作/运镜（推近、平移、慢动作等）' : '6. 描述要静态画面，不要动作过程'}
-7. 不要任何解释、序号、引号，只输出 prompt 文本本身
-8. **角色一致性**：如果"当前 prompt"里有人物的年龄/族裔/衣着/特征描述（如"28岁亚裔男性，戴黑框眼镜，深棕色短发"），新 prompt **必须保留同一外观**——这是同一个人物在不同分镜出现，绝不能换人/换衣服/换发型
+3. ${hasCurrentPrompt
+            ? '**当前 prompt 是事实来源**：里面的数字/金额/年份/数量/品牌名/Logo/屏幕文字/道具/布局关系/环境必须逐项保留，不准删除、不准换词弱化'
+            : '必须把口播里的关键数字、专有名词、物件、环境转换成可见画面'}
+4. 不准把具体元素概括成"科技公司标志""数据面板""复杂背景"这类空话；如果原文写了 OpenAI、Google、NVIDIA、540亿、7个 Logo，就必须原样保留
+5. 可删除 current prompt 里重复的末尾风格尾巴（如重复的 8K、摄影机型号、无卡通二次元），但不能删画面主体和道具
+6. **严禁自己写"XX风格""XX摄影""电影级""4K""浅景深""艺术风"等风格词**——风格由系统统一追加，你写了会跟系统追加的风格打架
+7. 中国语境优先（亚裔人物、汉字招牌、中式街景等）
+8. 比例：${aspectHint}
+${isVideoMode ? '9. 描述要包含动作/运镜（推近、平移、慢动作等）' : '9. 描述要静态画面，不要动作过程'}
+10. 不要任何解释、序号、引号，只输出 prompt 文本本身
+11. **角色一致性**：如果"当前 prompt"里有人物的年龄/族裔/衣着/特征描述（如"28岁亚裔男性，戴黑框眼镜，深棕色短发"），新 prompt **必须保留同一外观**——这是同一个人物在不同分镜出现，绝不能换人/换衣服/换发型
 
 ## 视觉风格指令（决定整支视频的调性，你写画面时要往这个方向贴主体/材质/光影）
 ${visualStyle.llmStyleRule}
 
 ## 口播文案
 ${text}
-${currentPrompt ? `\n## 当前 prompt（可参考改进 + 必须继承其中的人物外观描述）\n${currentPrompt}` : ''}`;
+${hasCurrentPrompt ? `\n## 当前 prompt（主要输入，必须保真继承其中的具体画面元素）\n${currentPrompt}` : ''}`;
         const result = await llm.completeWithScene('copy_adapt', // text-fast 类别，速度快
-        isVideoMode ? '短视频画面 prompt 工程师（视频）' : '短视频画面 prompt 工程师（图片）', userPrompt, 0.8);
+        isVideoMode ? '短视频画面 prompt 工程师（视频）' : '短视频画面 prompt 工程师（图片）', userPrompt, hasCurrentPrompt ? 0.35 : 0.65);
         const llmOutput = String(result || '')
             .trim()
             .replace(/^["「【\[]+|["」】\]]+$/g, '') // 去引号
@@ -410,12 +436,11 @@ router.get('/ai-image/providers', (_req, res) => {
 // 完全云端化后,所有旧 provider 字符串都规范成 'cloud',底层 CloudVideoAdapter
 // 按用户云端 video 配置的 providerCode 自动分发(灵芽 / 百炼 / 速创等)
 const RegenOneSchema = zod_1.z.object({
-    provider: zod_1.z
-        .preprocess(() => 'cloud', zod_1.z.enum(['cloud']))
-        .default('cloud'),
+    provider: AiVideoProviderSchema.default('cloud'),
     prompt: zod_1.z.string().min(1).max(500),
     aspect: zod_1.z.enum(['9:16', '16:9', '1:1']).default('9:16'),
     duration: zod_1.z.number().min(3).max(10).default(5),
+    model: zod_1.z.string().max(80).optional(),
     sceneIndex: zod_1.z.number().int().positive(),
     /** 口播原文 — 用于按需补写 prompt(切了 mode 但 prompt 还是图版/口播原文时触发)*/
     text: zod_1.z.string().max(2000).optional(),
@@ -444,6 +469,7 @@ router.post('/ai-video/regenerate-one', (0, validate_1.validateBody)(RegenOneSch
             prompt: effectivePrompt,
             aspect: req.body.aspect,
             duration: req.body.duration,
+            model: req.body.model,
         }, destDir);
         res.json(ok({ sceneIndex: req.body.sceneIndex, result }));
     }
@@ -573,6 +599,38 @@ router.get('/:id/export-draft', async (req, res) => {
     }
 });
 // ═══════════════ AI 视频生成（B 路线）═══════════════
+router.get('/ai-video/jimeng/status', async (_req, res) => {
+    try {
+        res.json(ok(await (0, jimeng_cli_1.checkJimengCliStatus)()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/ai-video/jimeng/login', async (_req, res) => {
+    try {
+        res.json(ok(await (0, jimeng_cli_1.loginJimengCli)()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/ai-video/jimeng/login/check', async (req, res) => {
+    try {
+        res.json(ok(await (0, jimeng_cli_1.checkJimengCliLogin)(String(req.body?.deviceCode || ''))));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/ai-video/jimeng/logout', async (_req, res) => {
+    try {
+        res.json(ok(await (0, jimeng_cli_1.logoutJimengCli)()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
 // 列 provider + configured 状态
 router.get('/ai-video/providers', (_req, res) => {
     try {
@@ -586,8 +644,7 @@ router.get('/ai-video/providers', (_req, res) => {
 router.post('/ai-video/estimate', async (req, res) => {
     try {
         const { provider: rawProvider = 'lingyaai', scenes = [] } = req.body;
-        const { normalizeVideoProvider } = require('../services/ai-video-gen');
-        const provider = normalizeVideoProvider(rawProvider);
+        const provider = (0, ai_video_gen_1.normalizeVideoProvider)(rawProvider);
         const adapter = (0, ai_video_gen_1.getAdapter)(provider);
         const totalSec = scenes.reduce((sum, s) => sum + (s.duration || 5), 0);
         const costPerScene = scenes.map((s) => ({
@@ -612,9 +669,8 @@ router.post('/ai-video/estimate', async (req, res) => {
 router.post('/ai-video/generate-stream', async (req, res) => {
     const sse = new sse_manager_1.SSEManager(res);
     try {
-        const { provider: rawProvider = 'lingyaai', scenes = [], resolution = '1080x1920' } = req.body;
-        const { normalizeVideoProvider } = require('../services/ai-video-gen');
-        const provider = normalizeVideoProvider(rawProvider);
+        const { provider: rawProvider = 'lingyaai', scenes = [], resolution = '1080x1920', model, } = req.body;
+        const provider = (0, ai_video_gen_1.normalizeVideoProvider)(rawProvider);
         if (!Array.isArray(scenes) || scenes.length === 0) {
             return sse.sendError('scenes 为空');
         }
@@ -629,6 +685,7 @@ router.post('/ai-video/generate-stream', async (req, res) => {
                 s.text,
             aspect,
             duration: Math.min(10, s.duration || 5),
+            model: typeof model === 'string' ? model : undefined,
         }));
         const destDir = (0, paths_1.dataDir)('one-click-cache', 'ai-generated');
         const results = await (0, ai_video_gen_1.generateBatch)(provider, requests, destDir, (idx, status, err) => {

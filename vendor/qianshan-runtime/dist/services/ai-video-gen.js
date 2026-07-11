@@ -17,22 +17,29 @@ exports.regenerateOne = regenerateOne;
 //  内部:每次都从档位系统拿"用户当前 video 类云端配置",按 providerCode 分协议:
 //    - 'aliyun_dashscope' → 百炼 video-synthesis async API
 //    - 'wuyinkeji' → private async /api/async/video_grok_imagine
-//    - 其它(lingya/cool/bltcy/geek) → OpenAI-compat /v1/videos
+//    - 'cool' → private async /v1/cool/generate
+//    - 其它(lingya/bltcy/geek) → OpenAI-compat /v1/videos
 //        细分:veo_* model → chat/completions 同步;其它(wan/seedance/sora) → /v1/videos 异步轮询
 //
 //  桌面端不再有任何 provider 自带 adapter class,baseUrl/apiKey/model 全用云端那条。
 // ══════════════════════════════════════════════════════════════════════
 const llm_tier_config_1 = require("./llm-tier-config");
 const cloud_llm_config_1 = require("./cloud-llm-config");
+const jimeng_cli_1 = require("./jimeng-cli");
 const logger_1 = require("../utils/logger");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const crypto_1 = __importDefault(require("crypto"));
-exports.VIDEO_PROVIDERS_ACTIVE = ['cloud'];
+exports.VIDEO_PROVIDERS_ACTIVE = ['cloud', 'jimeng_cli'];
 exports.VIDEO_PROVIDERS_LEGACY = [
     'jimeng', 'vidu', 'zhipu', 'happyhorse', 'lingyaai',
 ];
-function normalizeVideoProvider(_input) {
+function normalizeVideoProvider(input) {
+    const value = String(input || '').trim();
+    if (value === 'jimeng_cli' || value === 'jimeng')
+        return 'jimeng_cli';
+    if (value === 'lingyaai')
+        return 'lingyaai';
     return 'cloud';
 }
 // ─────────────────────────────────────────────────────────────────────────
@@ -45,7 +52,7 @@ function normalizeOpenAICompatBaseUrl(baseUrl) {
         return trimmed;
     return `${trimmed}/v1`;
 }
-const PRIVATE_ASYNC_VIDEO_PROVIDERS = new Set(['wuyinkeji']);
+const PRIVATE_ASYNC_VIDEO_PROVIDERS = new Set(['wuyinkeji', 'cool']);
 function stripV1Suffix(baseUrl) {
     return baseUrl.replace(/\/+$/, '').replace(/\/v\d+$/i, '');
 }
@@ -493,6 +500,218 @@ async function generateViaWuyinkejiGrokImagine(baseUrl, apiKey, model, req, dest
     };
 }
 // ─────────────────────────────────────────────────────────────────────────
+// Cool 网关(mjapi.cc.cd / coolapis)视频异步分支
+//
+// 提交: POST {base}/v1/cool/generate
+// 轮询: GET  {base}/v1/cool/task/{taskId}
+// Body:   { prompt, model, ratio, duration, files? }
+// ─────────────────────────────────────────────────────────────────────────
+function normalizeCoolBaseUrl(baseUrl) {
+    const cleanBase = stripV1Suffix(baseUrl);
+    try {
+        const url = new URL(cleanBase);
+        if (url.hostname === 'panel.mjapi.cc.cd') {
+            url.hostname = 'api.mjapi.cc.cd';
+            url.pathname = '';
+            url.search = '';
+            url.hash = '';
+            return url.toString().replace(/\/+$/, '');
+        }
+    }
+    catch {
+        // Keep the caller-provided URL when it is not parseable; the request error will surface it.
+    }
+    return cleanBase;
+}
+function extractCoolTaskId(json) {
+    const value = json?.task_id ||
+        json?.taskId ||
+        json?.id ||
+        json?.data?.task_id ||
+        json?.data?.taskId ||
+        json?.data?.id;
+    return value == null ? '' : String(value);
+}
+function extractCoolStatus(json, rawText) {
+    const value = json?.status ??
+        json?.task_status ??
+        json?.taskStatus ??
+        json?.data?.status ??
+        json?.data?.task_status ??
+        json?.data?.taskStatus ??
+        json?.result?.status;
+    if (value != null)
+        return String(value).toLowerCase();
+    const match = rawText.match(/"status"\s*:\s*("?)([^",}\]]+)\1/i);
+    return match?.[2]?.toLowerCase() || '';
+}
+function isCoolDoneStatus(status) {
+    return ['2', 'success', 'succeeded', 'completed', 'complete', 'finished', 'done'].includes(status);
+}
+function isCoolFailedStatus(status) {
+    return ['3', '4', '-1', 'failed', 'fail', 'error', 'expired', 'cancelled', 'canceled'].includes(status);
+}
+function extractCoolVideoUrl(json, rawText) {
+    const urls = [];
+    const priorityNodes = [
+        json?.result?.url,
+        json?.result?.video_url,
+        json?.result?.videoUrl,
+        json?.data?.result?.url,
+        json?.data?.result?.video_url,
+        json?.data?.result?.videoUrl,
+        json?.data?.video_url,
+        json?.data?.videoUrl,
+        json?.data?.url,
+        json?.video_url,
+        json?.videoUrl,
+        json?.url,
+        json?.output?.video_url,
+        json?.output?.videoUrl,
+        json?.output?.url,
+    ];
+    for (const node of priorityNodes)
+        collectHttpUrls(node, urls);
+    if (urls.length === 0)
+        collectHttpUrls(json, urls);
+    const normalizedText = rawText.replace(/\\\//g, '/');
+    const rawUrlMatches = normalizedText.match(/https?:\/\/[^"'\s\\]+/g) || [];
+    urls.push(...rawUrlMatches);
+    const deduped = Array.from(new Set(urls.map((url) => url.trim()).filter(Boolean)));
+    return (deduped.find((url) => /\.(mp4|webm|mov)(?:[?#].*)?$/i.test(url)) ||
+        deduped.find((url) => !/\.(png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(url)) ||
+        '');
+}
+function extractCoolErrorMessage(json, rawText) {
+    const value = json?.error?.message ||
+        json?.error ||
+        json?.message ||
+        json?.msg ||
+        json?.data?.error?.message ||
+        json?.data?.error ||
+        json?.data?.message ||
+        json?.data?.msg;
+    return String(value || rawText.slice(0, 200) || 'unknown error');
+}
+async function generateViaCoolVideo(baseUrl, apiKey, model, req, destDir) {
+    const startMs = Date.now();
+    const duration = Math.max(4, Math.min(10, Math.round(req.duration || 5)));
+    const cleanBase = normalizeCoolBaseUrl(baseUrl);
+    const submitUrl = `${cleanBase}/v1/cool/generate`;
+    const tasksBase = `${cleanBase}/v1/cool/task/`;
+    const body = {
+        prompt: req.prompt,
+        model,
+        ratio: req.aspect,
+        duration,
+    };
+    if (req.referenceImagePath && /^https?:\/\//i.test(req.referenceImagePath)) {
+        body.files = [{ url: req.referenceImagePath, type: 'image' }];
+    }
+    else if (req.referenceImagePath) {
+        logger_1.logger.warn(`[AIVideo][cool:${model}] local reference image ignored: ${req.referenceImagePath}`);
+    }
+    logger_1.logger.info(`[AIVideo][cool:${model}] POST ${submitUrl} ratio=${req.aspect} duration=${duration}s`);
+    let submitRes;
+    try {
+        submitRes = await fetch(submitUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(60000),
+        });
+    }
+    catch (err) {
+        throw new Error(`Cool 视频提交网络异常:${String(err?.message || err)}`);
+    }
+    const submitText = await submitRes.text();
+    if (!submitRes.ok) {
+        logger_1.logger.warn(`[AIVideo][cool:${model}] submit HTTP ${submitRes.status}: ${submitText.slice(0, 300)}`);
+        throw new Error(`Cool 视频提交失败 HTTP ${submitRes.status}:${submitText.slice(0, 200)}`);
+    }
+    let submitJson;
+    try {
+        submitJson = JSON.parse(submitText);
+    }
+    catch {
+        throw new Error(`Cool 视频提交响应非 JSON:${submitText.slice(0, 200)}`);
+    }
+    const taskId = extractCoolTaskId(submitJson);
+    if (!taskId) {
+        throw new Error(`Cool 视频提交未返回 task_id:${submitText.slice(0, 200)}`);
+    }
+    logger_1.logger.info(`[AIVideo][cool:${model}] task submitted: task_id=${taskId}`);
+    const deadline = Date.now() + 10 * 60 * 1000;
+    const POLL_INTERVAL = 5000;
+    let videoUrl = '';
+    let lastStatus = '';
+    let lastLoggedAt = 0;
+    let firstPollLogged = false;
+    let lastPollBody = '';
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        let pollRes;
+        try {
+            pollRes = await fetch(`${tasksBase}${encodeURIComponent(taskId)}`, {
+                headers: { Authorization: `Bearer ${apiKey}` },
+                signal: AbortSignal.timeout(20000),
+            });
+        }
+        catch (err) {
+            logger_1.logger.warn(`[AIVideo][cool:${taskId}] poll network err: ${String(err?.message || err)}`);
+            continue;
+        }
+        const pollText = await pollRes.text();
+        lastPollBody = pollText;
+        if (!pollRes.ok) {
+            logger_1.logger.warn(`[AIVideo][cool:${taskId}] poll HTTP ${pollRes.status}: ${pollText.slice(0, 200)}`);
+            continue;
+        }
+        if (!firstPollLogged) {
+            logger_1.logger.info(`[AIVideo][cool:${taskId}] first poll body=${pollText.slice(0, 600)}`);
+            firstPollLogged = true;
+        }
+        let pollJson;
+        try {
+            pollJson = JSON.parse(pollText);
+        }
+        catch {
+            pollJson = null;
+        }
+        const status = extractCoolStatus(pollJson, pollText);
+        const maybeVideoUrl = extractCoolVideoUrl(pollJson, pollText);
+        if (status && (status !== lastStatus || Date.now() - lastLoggedAt > 30000)) {
+            logger_1.logger.info(`[AIVideo][cool:${taskId}] status=${status} elapsed=${((Date.now() - startMs) / 1000).toFixed(0)}s`);
+            lastStatus = status;
+            lastLoggedAt = Date.now();
+        }
+        if (maybeVideoUrl && (!status || isCoolDoneStatus(status))) {
+            videoUrl = maybeVideoUrl;
+            break;
+        }
+        if (isCoolDoneStatus(status)) {
+            throw new Error(`Cool 视频 status=${status} 但未返回视频 URL:${pollText.slice(0, 300)}`);
+        }
+        if (isCoolFailedStatus(status)) {
+            throw new Error(`Cool 视频任务失败:${extractCoolErrorMessage(pollJson, pollText)}`);
+        }
+    }
+    if (!videoUrl) {
+        logger_1.logger.warn(`[AIVideo][cool:${taskId}] timeout lastStatus=${lastStatus || 'unknown'} lastBody=${lastPollBody.slice(0, 600)}`);
+        throw new Error(`Cool 视频超时(task=${taskId}, lastStatus=${lastStatus || 'unknown'})`);
+    }
+    logger_1.logger.info(`[AIVideo][cool:${taskId}] downloading ${videoUrl.slice(0, 80)}...`);
+    const localName = `cool-${String(taskId).slice(-12)}-${crypto_1.default.randomBytes(3).toString('hex')}.mp4`;
+    const localPath = path_1.default.join(destDir, localName);
+    const dl = await fetch(videoUrl, { signal: AbortSignal.timeout(120000) });
+    if (!dl.ok)
+        throw new Error(`下载 Cool 视频失败 HTTP ${dl.status}`);
+    fs_1.default.writeFileSync(localPath, Buffer.from(await dl.arrayBuffer()));
+    const elapsedSec = (Date.now() - startMs) / 1000;
+    logger_1.logger.info(`[AIVideo][cool:${taskId}] done elapsed=${elapsedSec.toFixed(1)}s file=${localPath}`);
+    return { localPath, taskId, elapsedSec, costCny: duration * 0.2, usedModel: model };
+}
+// ─────────────────────────────────────────────────────────────────────────
 // 阿里云百炼 video-synthesis async 分支
 // ─────────────────────────────────────────────────────────────────────────
 async function generateViaDashscope(apiKey, model, req, destDir) {
@@ -775,6 +994,9 @@ class CloudVideoAdapter {
         if (cfg.providerCode === 'wuyinkeji') {
             return generateViaWuyinkejiGrokImagine(cfg.baseUrl, cfg.apiKey, cfg.model, req, destDir);
         }
+        if (cfg.providerCode === 'cool') {
+            return generateViaCoolVideo(cfg.baseUrl, cfg.apiKey, cfg.model, req, destDir);
+        }
         if (cfg.providerCode === 'volcengine_ark') {
             // 火山方舟 Seedance — URL 写死,baseUrl 入参忽略
             return generateViaVolcengineArkVideo(cfg.apiKey, cfg.model, req, destDir);
@@ -782,15 +1004,24 @@ class CloudVideoAdapter {
         return generateViaOpenAICompat(cfg.baseUrl, cfg.apiKey, cfg.model, req, destDir);
     }
 }
+class JimengCliVideoAdapter {
+    name = '即梦 CLI';
+    estimateCost(_duration) {
+        return 0;
+    }
+    async generate(req, destDir) {
+        fs_1.default.mkdirSync(destDir, { recursive: true });
+        return (0, jimeng_cli_1.generateJimengCliTextVideo)(req, destDir, req.model);
+    }
+}
 const adapters = {
     cloud: new CloudVideoAdapter(),
     // 老 'lingyaai' 标识也指向云端 adapter,兼容历史 callsite
     lingyaai: new CloudVideoAdapter(),
+    jimeng_cli: new JimengCliVideoAdapter(),
 };
 function getAdapter(provider) {
-    if (provider === 'lingyaai' || provider === 'cloud')
-        return adapters[provider];
-    return adapters.cloud;
+    return adapters[normalizeVideoProvider(provider)];
 }
 function listProviders() {
     return [
@@ -800,6 +1031,13 @@ function listProviders() {
             configured: true,
             costPerSec: 0.1,
             note: '用户云端 user_llm_config (video 类) 决定走灵芽中转还是百炼直连等',
+        },
+        {
+            id: 'jimeng_cli',
+            name: '即梦 CLI(本机登录)',
+            configured: Boolean((0, jimeng_cli_1.findDreaminaExecutableSync)()),
+            costPerSec: 0,
+            note: '使用本机 dreamina CLI 纯文生视频,费用从用户即梦账号扣除',
         },
     ];
 }
@@ -844,6 +1082,7 @@ function validateVideoFile(filePath, minDuration = 3) {
 const VIDEO_CONCURRENCY = {
     cloud: 3,
     lingyaai: 3,
+    jimeng_cli: 1,
 };
 const rateLimitState = { throttled: false, throttleUntil: 0 };
 async function generateBatch(provider, requests, destDir, onProgress) {

@@ -412,6 +412,7 @@ exports.SUBTITLE_STYLES = [
     { id: 'standard', label: '标准（白字黑描边）', force_style: 'FontName=Microsoft YaHei,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=0,Alignment=2,MarginV=50' },
     { id: 'science', label: '科普（白底黑字色块）', force_style: 'FontName=Microsoft YaHei,FontSize=14,PrimaryColour=&H00000000,BackColour=&HC0FFFFFF,BorderStyle=4,Outline=2,Shadow=0,Alignment=2,MarginV=60' },
     { id: 'variety', label: '综艺（白字红描边大字）', force_style: 'FontName=Microsoft YaHei,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H000000FF,Outline=3,Shadow=1,Alignment=2,MarginV=80,Bold=1' },
+    { id: 'blackbox', label: '黑底白字（黑色色块）', force_style: 'FontName=Microsoft YaHei,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=8,Shadow=0,Alignment=2,MarginV=70,Bold=1' },
 ];
 // ═══════════════ 工具 ═══════════════
 function ensureDataDir(...sub) {
@@ -461,37 +462,26 @@ function voiceById(id) {
     // 3) 兜底:默认音色
     return exports.VOICES[0];
 }
-/**
- * 统一 TTS 分发：百炼 CosyVoice2（首选）→ Edge TTS（降级）
- *
- * 走百炼 = 同时满足两个条件：
- *   1. 用户配了 happyhorse Key
- *   2. 用户在 设置 → 阿里云百炼卡片里把 TTS 开关打开（默认开）
- * 任一不满足或合成失败 → 自动降级 Edge TTS（免 Key、机械音）
- */
-/**
- * 解析当前 voice 类档位 → 拿真实 (apiKey, modelName, baseUrl, providerCode)
- *
- * 关键:**走档位系统**(tblTierConfig + resolveCategory),不直接读云端默认。
- * 这样桌面端 Settings 里的"档位下拉"切换 voice config 后,这里跟着变。
- *
- * 流程:
- *   1) llmTierConfig.resolveCategory('voice') 解出 cloudId / model / baseUrl / providerCode
- *      (用户在档位下拉选了 cloud:{id} → 这里返回那条 cloud 配置的元数据)
- *   2) getDecryptedKey(cloudId) 拿明文 apiKey(5min 缓存)
- *
- * resolveCategory 内部已带兜底:档位没设 → 自动退到云端默认条。
- * 拿不到 cloudId 或 apiKey → 返 null,调用方降级 Edge TTS。
- */
 async function getVoiceCloudResolved() {
     try {
         const r = await llm_tier_config_1.llmTierConfig.resolveCategory('voice');
-        if (!r?.cloudId)
-            return null;
+        if (!r?.cloudId) {
+            return {
+                ok: false,
+                reason: 'no-config',
+                message: '云端未配置语音(voice)模型,请到 qianshanai.cn 网页端配置',
+            };
+        }
         const apiKey = await (0, cloud_llm_config_1.getDecryptedKey)(r.cloudId);
-        if (!apiKey)
-            return null;
+        if (!apiKey) {
+            return {
+                ok: false,
+                reason: 'no-key',
+                message: '语音 Key 获取失败(网络异常),请稍后重试',
+            };
+        }
         return {
+            ok: true,
             apiKey,
             modelName: r.model || '',
             baseUrl: r.baseUrl,
@@ -501,9 +491,15 @@ async function getVoiceCloudResolved() {
     }
     catch (err) {
         logger_1.logger.warn(`[Voice] tier 解析异常: ${String(err)}`);
-        return null;
+        return {
+            ok: false,
+            reason: 'error',
+            message: `语音配置解析异常: ${String(err?.message || err).slice(0, 120)}`,
+        };
     }
 }
+// 语音预检探活成功缓存:同一 (cloud配置+model+音色) 5 分钟内不重复合成扣费
+let voiceProbeOkCache = null;
 async function dispatchTTS(voice, text, outPath, rate, pitch, _emotion) {
     // Edge 风格的 "+10%" 字符串 → 百炼 speed 倍率
     // CosyVoice2 安全范围 0.5-2.0，超过会报错或破音
@@ -529,11 +525,18 @@ async function dispatchTTS(voice, text, outPath, rate, pitch, _emotion) {
     let dashscopeKey;
     let cloudVoiceModel;
     let cloudVoiceBaseUrl;
+    let fallbackReason;
     const resolved = await getVoiceCloudResolved();
-    if (resolved) {
+    if (resolved.ok) {
         dashscopeKey = resolved.apiKey;
         cloudVoiceModel = resolved.modelName;
         cloudVoiceBaseUrl = resolved.baseUrl;
+    }
+    else {
+        // 以前这里是完全静默的 —— 拿不到 key 连 warn 都没有,直接走 Edge,
+        // 用户配置错了根本无从得知。现在记录原因并透传给调用方。
+        fallbackReason = resolved.message;
+        logger_1.logger.warn(`[TTS] 云端语音不可用(${resolved.reason}),降级 Edge TTS: ${resolved.message}`);
     }
     if (dashscopeKey) {
         // 实际 model 名:克隆音色 voice.model 优先(必须 v3.5-plus),否则用云端配的
@@ -547,7 +550,7 @@ async function dispatchTTS(voice, text, outPath, rate, pitch, _emotion) {
             const minimaxVoiceId = voice.minimaxVoice;
             if (minimaxVoiceId) {
                 try {
-                    return await (0, tts_minimax_1.synthesizeMiniMaxToMp3)({
+                    await (0, tts_minimax_1.synthesizeMiniMaxToMp3)({
                         voice: minimaxVoiceId,
                         text,
                         outPath,
@@ -559,20 +562,23 @@ async function dispatchTTS(voice, text, outPath, rate, pitch, _emotion) {
                         model: effectiveModel,
                         baseUrl: cloudVoiceBaseUrl,
                     });
+                    return { engine: 'minimax', fallback: false };
                 }
                 catch (err) {
-                    logger_1.logger.warn(`[TTS] MiniMax 失败,降级 Edge TTS: ${String(err?.message || err).slice(0, 200)}`);
+                    fallbackReason = `MiniMax 合成失败: ${String(err?.message || err).slice(0, 200)}`;
+                    logger_1.logger.warn(`[TTS] MiniMax 失败,降级 Edge TTS: ${fallbackReason}`);
                     // fall through 到 Edge
                 }
             }
             else {
+                fallbackReason = `音色 ${voice.id} 不支持 MiniMax(缺 minimaxVoice 映射)`;
                 logger_1.logger.warn(`[TTS] 云端 modelName=${effectiveModel} 但 voice ${voice.id} 不带 minimaxVoice,降级 Edge`);
             }
         }
         else {
             // ─── cosyvoice / 其他 dashscope model 路径 ───
             try {
-                return await (0, tts_dashscope_1.synthesizeDashScopeToMp3)({
+                await (0, tts_dashscope_1.synthesizeDashScopeToMp3)({
                     voice: voice.dashscopeVoice,
                     text,
                     outPath,
@@ -581,23 +587,27 @@ async function dispatchTTS(voice, text, outPath, rate, pitch, _emotion) {
                     apiKey: dashscopeKey,
                     ...(effectiveModel ? { model: effectiveModel } : {}),
                 });
+                return { engine: 'cosyvoice', fallback: false };
             }
             catch (err) {
-                logger_1.logger.warn(`[TTS] 百炼 CosyVoice 失败,降级 Edge TTS: ${String(err?.message || err).slice(0, 120)}`);
+                fallbackReason = `百炼 CosyVoice 合成失败: ${String(err?.message || err).slice(0, 120)}`;
+                logger_1.logger.warn(`[TTS] 百炼 CosyVoice 失败,降级 Edge TTS: ${fallbackReason}`);
                 // fall through 到 Edge
             }
         }
     }
     // 降级：Edge TTS（speed 倍率 → "+X%" 字符串）
+    // Edge 在本架构里永远是兜底(没有"用户主动选 Edge"的入口),所以走到这里必为降级
     const edgePct = Math.round((speed - 1) * 100);
     const edgeRate = edgePct >= 0 ? `+${edgePct}%` : `${edgePct}%`;
-    return (0, tts_edge_1.synthesizeToMp3)({
+    await (0, tts_edge_1.synthesizeToMp3)({
         voice: voice.edgeVoice,
         text,
         outPath,
         rate: edgeRate,
         pitch,
     });
+    return { engine: 'edge', fallback: true, fallbackReason: fallbackReason || '未知原因' };
 }
 function styleById(id) {
     return exports.SUBTITLE_STYLES.find((s) => s.id === id) || exports.SUBTITLE_STYLES[0];
@@ -653,11 +663,44 @@ function toSrtTime(sec) {
     const mi = ms % 1000;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(mi).padStart(3, '0')}`;
 }
-/** 把一条长字幕按 15 字切段，避免一屏塞不下 */
+/**
+ * 把一条长字幕按显示宽切段（英文/数字按半个汉字宽计），避免一屏塞不下。
+ * 切点避开英文单词/数字串中间（"seedance" 不会被劈成 "seedanc" + "e"）。
+ */
 function splitCaption(text, perLine = 15) {
+    const isWord = (c) => /[A-Za-z0-9]/.test(c);
+    const charW = (c) => (/[\x20-\x7E]/.test(c) ? 0.5 : 1);
     const out = [];
-    for (let i = 0; i < text.length; i += perLine) {
-        out.push(text.slice(i, i + perLine));
+    let pos = 0;
+    while (pos < text.length) {
+        // 按显示宽走到本行理想终点
+        let w = 0;
+        let cut = pos;
+        while (cut < text.length && w + charW(text[cut]) <= perLine) {
+            w += charW(text[cut]);
+            cut++;
+        }
+        if (cut >= text.length) {
+            out.push(text.slice(pos));
+            break;
+        }
+        // 切在英文单词中间 → 退到词首；词从行首开始退无可退 → 吞到词尾
+        if (isWord(text[cut - 1]) && isWord(text[cut])) {
+            let left = cut;
+            while (left > pos && isWord(text[left - 1]))
+                left--;
+            if (left > pos) {
+                cut = left;
+            }
+            else {
+                while (cut < text.length && isWord(text[cut]))
+                    cut++;
+            }
+        }
+        if (cut <= pos)
+            cut = Math.min(pos + perLine, text.length); // 保底防死循环
+        out.push(text.slice(pos, cut));
+        pos = cut;
     }
     return out.length ? out : [text];
 }
@@ -866,7 +909,7 @@ class OneClickService {
             logger_1.logger.warn(`[OneClick] LLM 切分镜失败，降级标点切: ${String(err?.message || err).slice(0, 120)}`);
             // 降级链：标点切 → LLM 补画面
             // 每镜目标时长由导演分析的 pacingStrategy 决定（qualityMode 只管 ai-video 配额，不管节奏）
-            // 读不到导演结果（null/undefined/NaN/非法值）时兜底 5s，并夹紧到 [2, 10] 防越界
+            // 读不到导演结果（null/undefined/NaN/非法值）时兜底 5s，并夹紧到画面节拍范围
             const cnCount = (scriptText.match(/[\u4e00-\u9fff]/g) || []).length;
             const enCount = (scriptText.replace(/[\u4e00-\u9fff]/g, '').match(/[A-Za-z0-9]+/g) || []).length;
             const estDurationSec = cnCount * 0.25 + enCount * 0.35;
@@ -875,13 +918,14 @@ class OneClickService {
             const rawAvg = directorResult?.pacingStrategy?.suggestedAvgDuration;
             const { secPerScene, targetSceneCount } = (0, scene_enrich_1.computePacing)(estDurationSec, rawAvg);
             const idealChars = Math.round(secPerScene / 0.25); // 中文 1 字 ≈ 0.25s
-            // premium 放宽字数上限到 2.5x（≤60 字 ≈15s），让标点切也能产出 12s+ 长分镜走 mixed
-            const upperMul = secPerScene >= 6 ? 2.5 : 1.5;
-            const maxCharsCap = Math.round(idealChars * upperMul);
-            logger_1.logger.info(`[OneClick] 标点降级: qualityMode=${qualityMode}(${secPerScene.toFixed(1)}s/段), 目标 ${targetSceneCount} 段（上限${scene_enrich_1.MAX_SCENES}）, 每段 ≤${maxCharsCap} 字`);
+            // fallback 也是画面生成单位：目标 5-8s，硬上限约 12s，避免降级路径产出 20s 长分镜。
+            const upperMul = 1.5;
+            const maxCharsCap = Math.min(scene_enrich_1.VISUAL_SCENE_HARD_MAX_CHARS, Math.round(idealChars * upperMul));
+            logger_1.logger.info(`[OneClick] 标点降级: qualityMode=${qualityMode}(${secPerScene.toFixed(1)}s/段), 目标 ${targetSceneCount} 段（上限${scene_enrich_1.MAX_SCENES}）, 每段 ≤${maxCharsCap} 字（约≤${scene_enrich_1.VISUAL_SCENE_HARD_MAX_SEC}s）`);
             const rawScenes = (0, scene_splitter_1.splitByPunctuation)(scriptText, {
                 minChars: 6,
-                maxChars: maxCharsCap, // budget=24, balanced=30, premium=60
+                maxChars: maxCharsCap,
+                targetSeconds: Math.min(8, secPerScene),
                 minScenes: Math.min(3, targetSceneCount),
                 maxScenes: Math.max(10, Math.ceil(targetSceneCount * 1.3)),
             });
@@ -1489,6 +1533,9 @@ ${trimmed}
             sse.sendProgress('TTS 配音', 22);
             const audioDir = ensureDataDir('one-click-cache', `v${record.id}`, 'audio');
             const segmentAudios = [];
+            // 记录哪些分镜的语音降级了(云端 AI 音色 → Edge 免费机械音 / 静音占位),
+            // 最终通过 sendDone 透传给前端结果页显式提醒 —— 降级绝不能静默
+            const ttsFallbacks = [];
             for (let i = 0; i < input.scenes.length; i++) {
                 const s = input.scenes[i];
                 const outAudio = path_1.default.join(audioDir, `seg-${i + 1}.mp3`);
@@ -1502,7 +1549,10 @@ ${trimmed}
                         // CosyVoice2 配音：emotion 走自然语言指令前缀（在 dispatchTTS 内拼），
                         // 同时按 emotion 微调语速（语速倍率 ×0.9-1.15）
                         const emotionRate = adjustRateByEmotion(input.voiceRate, s.emotion, s.narrativeRole, voice.provider);
-                        await dispatchTTS(voice, s.text, outAudio, emotionRate, input.voicePitch, s.emotion);
+                        const ttsRes = await dispatchTTS(voice, s.text, outAudio, emotionRate, input.voicePitch, s.emotion);
+                        if (ttsRes.fallback) {
+                            ttsFallbacks.push({ scene: i + 1, reason: ttsRes.fallbackReason || '未知原因' });
+                        }
                         // 合理性检查：高速率下 SF 偶尔返回空帧/破音频，probe 出来 < 0.5s 但本应至少 1s+
                         // 用 estimate 兜底（按 90% 缩放，因为是加速合成的）
                         const probed = this.probeDuration(outAudio);
@@ -1539,6 +1589,10 @@ ${trimmed}
                                 outAudio,
                             ]);
                             segmentAudios.push({ path: outAudio, duration: fallbackDuration, text: s.text });
+                            ttsFallbacks.push({
+                                scene: i + 1,
+                                reason: `TTS 完全失败,该段为静音占位: ${String(e?.message || e).slice(0, 120)}`,
+                            });
                         }
                         catch (silenceErr) {
                             logger_1.logger.error(`[OneClick] silence fallback also failed on seg ${i + 1}: ${String(silenceErr)}`);
@@ -1547,6 +1601,12 @@ ${trimmed}
                     }
                 }
                 sse.sendProgress(`TTS 配音 ${i + 1}/${input.scenes.length}`, 22 + ((i + 1) * 30) / input.scenes.length);
+            }
+            // 语音降级汇总:在进度流里立刻可见(结果页 done 事件还会再带完整明细)
+            if (ttsFallbacks.length > 0) {
+                logger_1.logger.warn(`[OneClick] ${ttsFallbacks.length}/${input.scenes.length} 个分镜语音降级: ` +
+                    ttsFallbacks.map((f) => `#${f.scene}(${f.reason.slice(0, 60)})`).join('; '));
+                sse.sendProgress(`⚠️ ${ttsFallbacks.length} 个分镜使用了免费兜底音色(机械音),完成后请查看提示`, 52);
             }
             // ── 字幕同步校正：先实测合并后 mp3 的真实总时长，与各段 probed 时长之和比对 ──
             //   语速调节后 TTS provider 返回的 mp3 容器 duration 偶尔不准（开头/结尾静音 padding 等），
@@ -1652,6 +1712,15 @@ ${trimmed}
                     catch (err) {
                         logger_1.logger.warn('[OneClick] 数字人 Phase 1.5 整体失败,降级为无数字人: ' + String(err));
                     }
+                }
+            }
+            else {
+                // 勾了数字人但请求没带 avatar 形象设置(前端没配默认形象 / 老版本前端)
+                // → 按设计全部忽略,但必须留日志,否则"勾了却没有数字人"无从排查
+                const wantedAvatar = input.scenes.filter((s) => s.useAvatar).length;
+                if (wantedAvatar > 0) {
+                    logger_1.logger.warn(`[OneClick] ${wantedAvatar} 个分镜勾选了数字人,但请求未带 avatar 形象设置 — ` +
+                        '全部忽略(请检查 设置→数字人形象 是否已配置默认形象)');
                 }
             }
             // 3. 生成字幕（优先用 ASR 真实时间戳）
@@ -1830,6 +1899,9 @@ ${trimmed}
                 srtPath,
                 thumbnailPath,
                 duration: Math.round(totalDuration),
+                // 语音降级明细(空数组不传):前端结果页据此显示 warning Alert,
+                // 让用户知道"这条片的语音是兜底机械音,该去检查配置",而不是怪工具音质差
+                ttsFallbacks: ttsFallbacks.length > 0 ? ttsFallbacks : undefined,
             });
         }
         catch (err) {
@@ -2108,14 +2180,17 @@ ${trimmed}
                 args.push('-loop', '1', '-i', s.localPath, '-t', String(dur));
                 // 图片场景没有原音可保留，必须加静音输入；放在 -vf 之前防止误绑
                 args.push('-f', 'lavfi', '-t', String(dur), '-i', 'anullsrc=r=44100:cl=stereo');
-                // 现在源头出对的比例（seedream/nano-banana 都按 9:16 真出），
-                // 所以直接 scale + pad（保 aspect），不需要 crop 中央裁切
-                // 然后再放大 2 倍给 zoompan 平滑运镜
+                // scale 到 2 倍画布给 zoompan 平滑运镜的 headroom。
+                // ⚠️ 必须接 pad 把画布补满到 2w×2h —— 否则用户上传的"非目标比例"图片
+                //    (如横图传进竖屏项目)scale 后只占画布一部分,zoompan 按 s=w×h 裁切的
+                //    窗口会超出图片边界 → 大面积黑甚至全黑(AI 图比例天生对所以没暴露,
+                //    上传场景才踩到)。pad 黑边后窗口永远落在画布内,off-aspect 图变成居中黑边。
                 const isLastSceneImg = i === p.scenes.length - 1;
                 const lastFreezeImg = isLastSceneImg && tailOn && freezeSec > 0;
                 const vfArr = [
                     'fps=30',
                     `scale=${w * 2}:${h * 2}:force_original_aspect_ratio=decrease`,
+                    `pad=${w * 2}:${h * 2}:(ow-iw)/2:(oh-ih)/2:color=black`,
                     `zoompan=z='${zoomExpr}':x='${xExpr}':y='${yExpr}':d=${frames}:s=${w}x${h}:fps=30`,
                     'setsar=1',
                     'format=yuv420p',
@@ -2136,13 +2211,16 @@ ${trimmed}
             // wantsKeepAudio 与 video 分支保持一致：仅 video 且勾了 keepOriginalAudio 且源有音频 → 取 0:a
             const wantsKeepAudio = s.kind === 'video' && !!s.keepOriginalAudio && this.probeHasAudio(s.localPath);
             if (wantsKeepAudio) {
-                // 保留原音：input 0 的视频 + input 0 的音频
-                args.push('-map', '0:v', '-map', '0:a', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '96k', '-ar', '44100', '-ac', '2', '-t', String(dur), outPath);
+                // 保留原音：input 0 的第 1 个视频流 + input 0 的音频
+                // 用 0:v:0 不用 0:v —— wuyinkeji/grok 这类源带"attached pic"封面 mjpeg 流,
+                // -map 0:v 会把封面也映射进输出,mp4 容器不允许两个 h264 视频流 →
+                // "Could not write header (incorrect codec parameters?)" 直接挂掉整段合成
+                args.push('-map', '0:v:0', '-map', '0:a', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '96k', '-ar', '44100', '-ac', '2', '-t', String(dur), outPath);
                 logger_1.logger.info(`[OneClick] scene ${i + 1} 保留 AI 视频原音`);
             }
             else {
-                // 静音轨：input 0 的视频 + input 1 的 lavfi 静音（已在前面 push 进 args）
-                args.push('-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '96k', '-t', String(dur), outPath);
+                // 静音轨：input 0 的第 1 个视频流 + input 1 的 lavfi 静音(同上,只取 0:v:0)
+                args.push('-map', '0:v:0', '-map', '1:a', '-c:v', 'libx264', '-preset', 'fast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '96k', '-t', String(dur), outPath);
             }
             const _t0 = Date.now();
             logger_1.logger.info(`[OneClick] normalize scene ${i + 1}/${p.scenes.length} 开始 (${s.kind}, dur=${dur.toFixed(2)}s, keepAudio=${wantsKeepAudio})`);
@@ -2312,8 +2390,9 @@ ${trimmed}
         }
         else {
             // 完全的"老路径"：无 BGM 且无尾段 + 没人要原音 → 简单 -vf 烧字幕
+            // 0:v:0 跟 normalize 一致 — 防止上游某些 mp4 自带 attached pic 封面流被一并 map
             finalArgs.push('-vf', subtitlesFilter);
-            finalArgs.push('-map', '0:v', '-map', '1:a');
+            finalArgs.push('-map', '0:v:0', '-map', '1:a');
         }
         finalArgs.push('-c:v', 'libx264', '-preset', finalEnc.preset, '-crf', finalEnc.crf, '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', finalEnc.ab, 
         // 尾段启用时用 -t 显式控时长（apad 已让 voice 撑到 totalVidDur）
@@ -2761,7 +2840,7 @@ AI 做不到：理解文案深层情感、匹配你账号风格、提供真人�
         let cloudModelName = '';
         let cloudApiKey = '';
         const resolved = await getVoiceCloudResolved();
-        if (resolved) {
+        if (resolved.ok) {
             cloudModelName = resolved.modelName || '';
             cloudApiKey = resolved.apiKey;
         }
@@ -2834,7 +2913,7 @@ AI 做不到：理解文案深层情感、匹配你账号风格、提供真人�
                 // MiniMax 克隆 → 走 multimodal-generation/generation 端点的 delete_voice action
                 // 用档位系统当前 voice 配置的 key(跟创建时同一把)
                 const resolved = await getVoiceCloudResolved();
-                if (resolved?.apiKey) {
+                if (resolved.ok && resolved.apiKey) {
                     await (0, tts_minimax_clone_1.deleteMiniMaxCloneVoice)({
                         voiceId: row.voiceId,
                         apiKey: resolved.apiKey,
@@ -2855,6 +2934,108 @@ AI 做不到：理解文案深层情感、匹配你账号风格、提供真人�
     }
     listSubtitleStyles() {
         return exports.SUBTITLE_STYLES.map((s) => ({ id: s.id, label: s.label }));
+    }
+    /**
+     * 语音就绪预检 —— 前端在点"生成视频"前调用。
+     *
+     * 解析当前 voice 档位 + 解密 key,跟 dispatchTTS 的判定逻辑完全同源:
+     * 这里返回 ready=false 就意味着合成时必然降级 Edge 机械音。
+     * 前端据此当场拦截提示(去配置 / 仍用免费音色),而不是让用户
+     * 等几分钟拿到一条机械音成片才发现配置有问题。
+     *
+     * 只读缓存解析,不实际调 TTS 端点 —— 零计费、毫秒级返回。
+     */
+    /**
+     * 语音就绪预检 — 不只查"key 拿得到",还用当前音色**真实合成 4 个字**做探活:
+     * key 改错 / model 名不存在 / MiniMax 未开通 / 克隆音色失效…全在这一步暴露,
+     * 不会等用户合成完整片才发现是机械音。
+     * 成本:4 字 ≈ ¥0.0001(cosyvoice)/ ¥0.0014(MiniMax);探活成功缓存 5 分钟不重复扣费。
+     * @param voiceId 前端当前选中的音色 id — 探活用跟真实合成完全相同的 voice+model 组合
+     */
+    async checkVoiceReadiness(voiceId) {
+        if (config_1.USE_MOCK) {
+            return { ready: true, engine: 'cosyvoice', model: 'mock' };
+        }
+        const resolved = await getVoiceCloudResolved();
+        if (!resolved.ok) {
+            return { ready: false, engine: 'edge', reason: resolved.reason, message: resolved.message };
+        }
+        const voice = voiceById(voiceId || exports.VOICES[0].id);
+        // 跟 dispatchTTS 同款的 model 优先级:克隆音色自带 model > 云端配的 modelName
+        const effectiveModel = voice.model || resolved.modelName || '';
+        const engine = effectiveModel.startsWith('MiniMax/')
+            ? 'minimax'
+            : 'cosyvoice';
+        const modelLabel = effectiveModel || 'cosyvoice-v3-flash(默认)';
+        // 探活成功缓存:同一 (cloud配置 + model + 音色) 5 分钟内成功过就不重复合成
+        const cacheKey = `${resolved.cloudId}|${effectiveModel}|${voice.id}`;
+        if (voiceProbeOkCache &&
+            voiceProbeOkCache.key === cacheKey &&
+            Date.now() - voiceProbeOkCache.at < 5 * 60_000) {
+            return { ready: true, engine, model: modelLabel };
+        }
+        const probeDir = ensureDataDir('one-click-cache', 'voice-probe');
+        const probePath = path_1.default.join(probeDir, `probe-${Date.now()}.mp3`);
+        try {
+            if (engine === 'minimax') {
+                const minimaxVoiceId = voice.minimaxVoice;
+                if (!minimaxVoiceId) {
+                    return {
+                        ready: false,
+                        engine: 'edge',
+                        reason: 'probe-failed',
+                        model: modelLabel,
+                        message: `当前音色「${voice.label}」不支持 MiniMax 模式(云端 model=${effectiveModel}),请换一个支持的音色`,
+                    };
+                }
+                await (0, tts_minimax_1.synthesizeMiniMaxToMp3)({
+                    voice: minimaxVoiceId,
+                    text: '语音测试',
+                    outPath: probePath,
+                    speed: 1,
+                    pitch: 0,
+                    apiKey: resolved.apiKey,
+                    model: effectiveModel,
+                    baseUrl: resolved.baseUrl,
+                });
+            }
+            else {
+                await (0, tts_dashscope_1.synthesizeDashScopeToMp3)({
+                    voice: voice.dashscopeVoice,
+                    text: '语音测试',
+                    outPath: probePath,
+                    speed: 1,
+                    pitch: 1,
+                    apiKey: resolved.apiKey,
+                    ...(effectiveModel ? { model: effectiveModel } : {}),
+                });
+            }
+            voiceProbeOkCache = { key: cacheKey, at: Date.now() };
+            return { ready: true, engine, model: modelLabel };
+        }
+        catch (err) {
+            const raw = String(err?.message || err).slice(0, 200);
+            logger_1.logger.warn(`[Voice] 预检探活失败(${engine} ${modelLabel}): ${raw}`);
+            // 作废缓存的明文 key:用户多半正在网页端改 key,不作废的话改对了
+            // 也要等 5 分钟缓存过期(或重启)才生效 —— 作废后下次点合成立刻回源拉新 key
+            (0, cloud_llm_config_1.invalidateDecryptedKey)(resolved.cloudId);
+            return {
+                ready: false,
+                engine: 'edge',
+                reason: 'probe-failed',
+                model: modelLabel,
+                message: `云端语音实际调用失败:${raw}`,
+            };
+        }
+        finally {
+            try {
+                if (fs_1.default.existsSync(probePath))
+                    fs_1.default.unlinkSync(probePath);
+            }
+            catch {
+                /* noop */
+            }
+        }
     }
 }
 exports.OneClickService = OneClickService;
