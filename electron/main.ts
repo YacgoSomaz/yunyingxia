@@ -40,6 +40,11 @@ async function startLegacyRuntime(): Promise<void> {
   await startServer()
   const seedResult = await seedLegacyRuntimeAssets(root)
   console.info('[Wanshan] Legacy runtime seeds:', seedResult)
+  // The original Qianshan Electron entrypoint initializes LLM routing after the
+  // API server starts. Our wrapper loads server.js directly, so we must do it here.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { llmConfig } = require(path.join(root, 'dist', 'services', 'llm-config.js')) as { llmConfig: { init(): Promise<void> } }
+  await llmConfig.init()
   if (mainWindow) registerIPC(mainWindow)
 }
 

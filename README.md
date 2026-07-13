@@ -76,6 +76,17 @@ npm start
 
 默认不启用 Mock，真实数据模式会访问公开热点、可信平台接口、用户主动登录的平台数据和用户配置的 AI 服务。
 
+文案工坊真实生成需要可用的 OpenAI 兼容 LLM Key。当前本地版支持从环境变量注入：
+
+```powershell
+$env:LLM_API_KEY = "<你的 key>"
+$env:LLM_BASE_URL = "https://api.example.com/v1"
+$env:LLM_MODEL = "gpt-4o-mini"
+npm start
+```
+
+也可使用 `OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`、`ARK_API_KEY`。未配置真实 Key 且 `WANSHAN_USE_MOCK` 不是 `1` 时，文案工坊会明确报错，不再返回离线示例文案。
+
 ## 商业版构建
 
 商业版会：

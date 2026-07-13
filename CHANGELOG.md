@@ -4,6 +4,8 @@
 
 - 客户端商业授权后台自动校验间隔调整为 10 分钟。
 - 本地缓存授权已过期时继续清理授权缓存，并通过主进程退出应用，要求重新激活。
+- 文案工坊真实模式不再静默降级到 MockLLMClient；缺少 LLM Key 时明确报错。
+- 原千山运行时增加本地环境变量 LLM Key 注入，支持 `LLM_API_KEY`、`OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`、`ARK_API_KEY`。
 
 ## 0.1.8 - 2026-07-13
 

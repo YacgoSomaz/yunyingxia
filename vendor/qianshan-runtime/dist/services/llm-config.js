@@ -70,8 +70,8 @@ class LLMConfigService {
         await this.reloadIntoRuntime();
     }
     /** 从云端 + DB routing 推到 runtime llm service。
-     *  Key 只走云端 — qianshanai.cn 网页端配的 LLM key 是唯一来源。
-     *  未登录 / 云端不可达 → credentials 为空 → llm.getClient() 自动 fallback 到 mock。
+     *  本地版优先保持云端配置能力;没有千山网页登录态时,允许从环境变量注入
+     *  OpenAI 兼容 LLM key。真实模式缺 key 时会直接报错,不再静默 mock。
      */
     async reloadIntoRuntime() {
         const routing = await db_1.db.select().from(schema_1.llmRouting);
@@ -84,6 +84,45 @@ class LLMConfigService {
             if (/\/v\d+$/.test(trimmed))
                 return trimmed;
             return `${trimmed}/v1`;
+        };
+        const envCredential = () => {
+            const pairs = [
+                {
+                    key: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
+                    baseUrl: process.env.LLM_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+                    model: process.env.LLM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+                },
+                {
+                    key: process.env.DASHSCOPE_API_KEY,
+                    baseUrl: process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                    model: process.env.DASHSCOPE_MODEL || 'qwen-plus',
+                },
+                {
+                    key: process.env.DEEPSEEK_API_KEY,
+                    baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
+                    model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+                },
+                {
+                    key: process.env.SILICONFLOW_API_KEY,
+                    baseUrl: process.env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1',
+                    model: process.env.SILICONFLOW_MODEL || 'Qwen/Qwen2.5-7B-Instruct',
+                },
+                {
+                    key: process.env.ARK_API_KEY,
+                    baseUrl: process.env.ARK_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3',
+                    model: process.env.ARK_MODEL || process.env.VOLCENGINE_ARK_MODEL || '',
+                },
+            ];
+            const hit = pairs.find((p) => typeof p.key === 'string' && p.key.trim());
+            if (!hit)
+                return null;
+            const provider = (process.env.LLM_PROVIDER || process.env.OPENAI_PROVIDER || 'local_env').replace(/[^a-zA-Z0-9_.-]/g, '') || 'local_env';
+            return {
+                provider,
+                apiKey: hit.key.trim(),
+                baseUrl: normalizeBaseUrl(hit.baseUrl),
+                model: hit.model || undefined,
+            };
         };
         // 同 providerCode 多条:isDefault=1 优先,否则后写入的覆盖
         const merged = new Map();
@@ -107,8 +146,19 @@ class LLMConfigService {
         catch (err) {
             logger_1.logger.warn(`[LLMConfig] 云端 LLM 配置拉取失败: ${String(err)}`);
         }
+        let runtimeRouting = routing.map((r) => ({ scene: r.scene, provider: r.provider, model: r.model }));
         const decryptedKeys = Array.from(merged.values());
-        llm_1.llm.setRouting(routing.map((r) => ({ scene: r.scene, provider: r.provider, model: r.model })));
+        if (decryptedKeys.length === 0) {
+            const env = envCredential();
+            if (env) {
+                const provider = env.provider || 'local_env';
+                const model = env.model;
+                decryptedKeys.push({ provider, apiKey: env.apiKey, baseUrl: env.baseUrl });
+                runtimeRouting = runtimeRouting.map((r) => ({ ...r, provider, model: model || r.model }));
+                logger_1.logger.info(`[LLMConfig] using local env LLM provider=${provider} model=${model || 'routing-default'}`);
+            }
+        }
+        llm_1.llm.setRouting(runtimeRouting);
         llm_1.llm.setCredentials(decryptedKeys);
         logger_1.logger.info(`[LLMConfig] loaded ${routing.length} routing, ${decryptedKeys.length} credentials (cloud=${cloudCount})`);
     }

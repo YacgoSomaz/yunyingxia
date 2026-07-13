@@ -12,11 +12,13 @@ exports.llm = void 0;
 //     provider 字段 = 云端 user_llm_config.providerCode (如 'lingya' / 'aliyun_dashscope')
 //  ③ Routing scene → {provider, model} 由 llm-tier-config 同步,
 //     scene 解析时 provider 也是 cloud providerCode。
-//  ④ 没有任何 cred → MockLLMClient 兜底(未登录前 boot 阶段会用到)。
+//  ④ 只有 USE_MOCK=1 才允许 MockLLMClient。真实模式缺 key 必须报错,
+//     避免用户把离线演示文案误认为真实模型生成。
 // ══════════════════════════════════════════════════════════════════════
 const openai_client_1 = require("./openai-client");
 const mock_client_1 = require("./mock-client");
 const logger_1 = require("../../utils/logger");
+const config_1 = require("../../utils/config");
 /**
  * 从 LLM 返回文本中稳健抽取 JSON。
  * 处理：1) markdown 代码块 ```json ... ```；2) 前后解释性废话；3) 先试 {...} 再试 [...]
@@ -145,8 +147,11 @@ class LLMService {
         }
         const cred = this.credentials.get(provider);
         if (!cred?.apiKey) {
-            logger_1.logger.warn(`[LLM] No credential for ${provider}, falling back to mock`);
-            return this.getClient('mock');
+            if (config_1.USE_MOCK) {
+                logger_1.logger.warn(`[LLM] No credential for ${provider}, USE_MOCK=1, falling back to mock`);
+                return this.getClient('mock');
+            }
+            throw new Error(`未配置可用的 AI 文案模型凭据(provider=${provider})。请设置 LLM_API_KEY/OPENAI_API_KEY，或启用 WANSHAN_USE_MOCK=1 进入离线演示。`);
         }
         const cacheKey = `${provider}::${model || 'default'}::${cred.baseUrl || ''}::${cred.apiKey.slice(0, 6)}`;
         if (!this.clients.has(cacheKey)) {
@@ -159,7 +164,9 @@ class LLMService {
         const first = this.credentials.keys().next().value;
         if (first)
             return this.getClient(first);
-        return this.getClient('mock');
+        if (config_1.USE_MOCK)
+            return this.getClient('mock');
+        throw new Error('未配置可用的 AI 文案模型凭据。请设置 LLM_API_KEY/OPENAI_API_KEY，或启用 WANSHAN_USE_MOCK=1 进入离线演示。');
     }
     // ═══════════════ 老接口(保留兼容) ═══════════════
     async chat(options) {
@@ -279,13 +286,13 @@ class LLMService {
     }
     /** 当前 LLM 对外的元信息(给前端 Header badge) */
     infoSummary() {
-        // 多 cloud provider 共存时显示 'mixed';0 个时显示 'mock'
+        // 多 cloud provider 共存时显示 'mixed';0 个时真实模式显示 'unconfigured'
         const routedProviders = Array.from(this.routing.values()).map((r) => r.provider);
         const uniq = Array.from(new Set(routedProviders));
-        const effectiveProvider = this.credentials.size === 0 ? 'mock' : uniq.length === 1 ? uniq[0] : 'mixed';
+        const effectiveProvider = this.credentials.size === 0 ? (config_1.USE_MOCK ? 'mock' : 'unconfigured') : uniq.length === 1 ? uniq[0] : 'mixed';
         return {
             provider: effectiveProvider,
-            useMock: this.credentials.size === 0,
+            useMock: this.credentials.size === 0 && config_1.USE_MOCK,
             routingCount: this.routing.size,
             credCount: this.credentials.size,
             mixed: uniq.length > 1,
