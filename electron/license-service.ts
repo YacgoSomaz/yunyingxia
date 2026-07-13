@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { CommercialConfig } from './commercial-config'
 import { verifyLicenseDocument } from './license-crypto'
 
-export const LICENSE_REFRESH_INTERVAL_SECONDS = 60
+export const LICENSE_REFRESH_INTERVAL_SECONDS = 10 * 60
 const AUTHORITATIVE_REJECTION_STATUSES = new Set([400, 401, 403, 404, 409, 410])
 
 export interface LicenseState {

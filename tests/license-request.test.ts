@@ -11,8 +11,8 @@ describe('license request body', () => {
     })
   })
 
-  it('refreshes commercial authorization roughly once per minute', () => {
-    expect(LICENSE_REFRESH_INTERVAL_SECONDS).toBe(60)
+  it('refreshes commercial authorization every ten minutes', () => {
+    expect(LICENSE_REFRESH_INTERVAL_SECONDS).toBe(10 * 60)
     expect(readFileSync('electron/license-service.ts', 'utf8')).not.toContain('12 * 3600')
   })
 
@@ -26,6 +26,8 @@ describe('license request body', () => {
     const source = readFileSync('electron/license-service.ts', 'utf8')
     expect(source).toContain('if (this.isAuthoritativeRejection(error)) this.clearCache()')
     expect(source).toContain('startBackgroundRefresh')
+    expect(source).toContain("onInvalid(new Error('授权已过期，请重新激活。'))")
     expect(readFileSync('electron/main.ts', 'utf8')).toContain('license.startBackgroundRefresh')
+    expect(readFileSync('electron/main.ts', 'utf8')).toContain('app.quit()')
   })
 })

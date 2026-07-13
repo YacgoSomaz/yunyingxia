@@ -57,7 +57,7 @@ https://license.runmo.art/wanshan-media/updates/latest.json
 
 ```text
 electron/commercial-config.ts        商业配置默认值，当前 productCode 必须是 wanshan_zimeiti
-electron/license-service.ts          激活、刷新、缓存清理、60 秒授权刷新
+electron/license-service.ts          激活、刷新、缓存清理、10 分钟授权刷新
 electron/license-crypto.ts           Ed25519 授权包验签
 electron/integrity-verifier.ts       安装目录完整性校验
 electron/update-service.ts           更新检查、下载和校验
@@ -118,7 +118,7 @@ pwsh -File packaging\build\build_release.ps1 `
 客户端应该这样处理授权：
 
 - 启动时刷新授权。
-- 运行中约 60 秒刷新一次。
+- 运行中约 10 分钟刷新一次。
 - 服务器返回 401/403/404/409/410 时，视为明确拒绝，清除本地授权缓存。
 - 只有网络临时错误才允许使用签名包内的离线宽限。
 - 显式过期卡密到点即过期，不额外加宽限。
