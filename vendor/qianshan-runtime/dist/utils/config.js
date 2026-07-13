@@ -29,8 +29,8 @@ if (!isPackaged) {
  * 默认 0（真实环境）：
  *   - ffmpeg / ffprobe：包内置二进制，默认可用
  *   - TTS：走微软 Edge Read Aloud（网络即可，无本地依赖）
- *   - 图片搜索：优先用户在 Settings 里填的 key，没 key 时 image-search 内部会回落 Mock
- *   - LLM：用户在 Settings 里配，没配时 llm runtime 自动降级 Mock
+ *   - 图片搜索：有 Pexels/Unsplash key 才真实检索，没 key 时真实模式报错
+ *   - LLM：本地模型配置/云端配置/环境变量三选一，没配时真实模式报错
  *
  * 用户主动 export USE_MOCK=1 时强制全 Mock（离线演示）。
  */

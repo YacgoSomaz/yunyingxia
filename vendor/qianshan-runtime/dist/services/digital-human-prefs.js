@@ -26,6 +26,9 @@ const logger_1 = require("../utils/logger");
 const crypto_storage_1 = require("../utils/crypto-storage");
 const DEFAULTS = {
     provider: 'aliyun_wan_s2v',
+    aliyun: {
+        model: 'wan2.2-s2v',
+    },
     xiling: {
         appId: '',
         model: 'turbo_v2',
@@ -61,9 +64,14 @@ function load() {
     try {
         const raw = fs_1.default.readFileSync(file(), 'utf-8');
         const parsed = JSON.parse(raw);
+        const a = parsed?.aliyun || {};
         const x = parsed?.xiling || {};
         cache = {
             provider: isValidProvider(parsed?.provider) ? parsed.provider : DEFAULTS.provider,
+            aliyun: {
+                apiKeyEncrypted: typeof a.apiKeyEncrypted === 'string' ? a.apiKeyEncrypted : undefined,
+                model: typeof a.model === 'string' && a.model.trim() ? a.model.trim() : DEFAULTS.aliyun.model,
+            },
             xiling: {
                 appId: typeof x.appId === 'string' ? x.appId : DEFAULTS.xiling.appId,
                 appKeyEncrypted: typeof x.appKeyEncrypted === 'string' ? x.appKeyEncrypted : undefined,
@@ -76,7 +84,7 @@ function load() {
         };
     }
     catch {
-        cache = { provider: DEFAULTS.provider, xiling: { ...DEFAULTS.xiling } };
+        cache = { provider: DEFAULTS.provider, aliyun: { ...DEFAULTS.aliyun }, xiling: { ...DEFAULTS.xiling } };
     }
     return cache;
 }
@@ -94,6 +102,10 @@ exports.digitalHumanPrefs = {
         const p = load();
         return {
             provider: p.provider,
+            aliyun: {
+                apiKeyConfigured: !!p.aliyun?.apiKeyEncrypted,
+                model: p.aliyun?.model || DEFAULTS.aliyun.model,
+            },
             xiling: {
                 appId: p.xiling.appId,
                 appKey: p.xiling.appKeyEncrypted ? crypto_storage_1.cryptoStorage.decrypt(p.xiling.appKeyEncrypted) : '',
@@ -109,6 +121,9 @@ exports.digitalHumanPrefs = {
     /** 主进程内部用 — 解密 AppKey;曦灵未配 AppKey 时返回 null */
     getResolved() {
         const p = load();
+        const aliyunApiKey = p.aliyun?.apiKeyEncrypted
+            ? crypto_storage_1.cryptoStorage.decrypt(p.aliyun.apiKeyEncrypted)
+            : '';
         let xiling = null;
         if (p.xiling.appId && p.xiling.appKeyEncrypted) {
             const appKey = crypto_storage_1.cryptoStorage.decrypt(p.xiling.appKeyEncrypted);
@@ -126,11 +141,27 @@ exports.digitalHumanPrefs = {
                 };
             }
         }
-        return { provider: p.provider, xiling };
+        return {
+            provider: p.provider,
+            aliyun: {
+                apiKey: aliyunApiKey || '',
+                model: p.aliyun?.model || DEFAULTS.aliyun.model,
+            },
+            xiling,
+        };
     },
     /** 局部更新;appKey 空就不动旧的;返回更新后的 public 视图 */
     set(update) {
         const prev = load();
+        const nextAliyun = { ...(prev.aliyun || DEFAULTS.aliyun) };
+        if (update.aliyun) {
+            if (typeof update.aliyun.apiKey === 'string' && update.aliyun.apiKey.trim()) {
+                nextAliyun.apiKeyEncrypted = crypto_storage_1.cryptoStorage.encrypt(update.aliyun.apiKey.trim());
+            }
+            if (typeof update.aliyun.model === 'string' && update.aliyun.model.trim()) {
+                nextAliyun.model = update.aliyun.model.trim();
+            }
+        }
         const nextXiling = { ...prev.xiling };
         if (update.xiling) {
             if (typeof update.xiling.appId === 'string')
@@ -157,11 +188,13 @@ exports.digitalHumanPrefs = {
         }
         const next = {
             provider: isValidProvider(update.provider) ? update.provider : prev.provider,
+            aliyun: nextAliyun,
             xiling: nextXiling,
         };
         cache = next;
         persist(next);
         logger_1.logger.info(`[DigitalHumanPrefs] provider=${next.provider} ` +
+            `aliyun.keyConfigured=${!!next.aliyun.apiKeyEncrypted} ` +
             `xiling.model=${next.xiling.model} ` +
             `xiling.uploadMode=${next.xiling.uploadMode} ` +
             `xiling.tempUploadConfigured=${!!next.xiling.tempUploadUrl} ` +

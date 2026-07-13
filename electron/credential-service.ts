@@ -13,14 +13,22 @@ interface StoredSettings {
   encryptedApiKey: string
 }
 
+export const TRUSTED_MODEL_ENDPOINTS = {
+  deepseek: {
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro']
+  }
+} as const
+
 export class CredentialService {
   constructor(private readonly filePath: string, private readonly codec: SecretCodec) {}
 
   save(input: SaveModelSettings): ModelSettings {
     const baseUrl = validateBaseUrl(input.baseUrl)
+    const model = validateModel(input.model)
     const current = this.read()
     const apiKey = input.apiKey?.trim() ? this.codec.encrypt(input.apiKey.trim()) : current.encryptedApiKey
-    this.write({ baseUrl, model: input.model.trim(), encryptedApiKey: apiKey })
+    this.write({ baseUrl, model, encryptedApiKey: apiKey })
     return this.load()
   }
 
@@ -60,16 +68,20 @@ export class CredentialService {
 
 export function validateBaseUrl(value: string): string {
   const normalized = value.trim().replace(/\/+$/, '')
-  if (!normalized) return ''
+  if (!normalized) return TRUSTED_MODEL_ENDPOINTS.deepseek.baseUrl
   let url: URL
   try {
     url = new URL(normalized)
   } catch {
     throw new Error('Base URL 格式无效')
   }
-  const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1'
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLocal)) {
-    throw new Error('Base URL 必须使用 HTTPS 或 localhost')
-  }
   return normalized
+}
+
+export function validateModel(value: string): string {
+  const model = value.trim()
+  if (!model) {
+    throw new Error('请填写模型/接入点 ID')
+  }
+  return model
 }

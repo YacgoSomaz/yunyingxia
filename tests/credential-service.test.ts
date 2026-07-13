@@ -15,16 +15,34 @@ describe('CredentialService', () => {
     const file = join(dir, 'settings.json')
     const service = new CredentialService(file, codec)
 
-    service.save({ baseUrl: 'https://api.example.com/v1', model: 'gpt-4o-mini', apiKey: 'secret-key' })
+    service.save({ baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash', apiKey: 'secret-key' })
 
     expect(readFileSync(file, 'utf8')).not.toContain('secret-key')
-    expect(service.load()).toEqual({ baseUrl: 'https://api.example.com/v1', model: 'gpt-4o-mini', hasApiKey: true })
+    expect(service.load()).toEqual({ baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash', hasApiKey: true })
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('rejects a remote HTTP endpoint', () => {
+  it('allows a remote HTTP relay endpoint', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wanshan-'))
+    const file = join(dir, 'settings.json')
+    const service = new CredentialService(file, codec)
+    expect(service.save({ baseUrl: 'http://example.com/v1', model: 'demo', apiKey: 'x' }))
+      .toEqual({ baseUrl: 'http://example.com/v1', model: 'demo', hasApiKey: true })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('allows a HTTPS relay endpoint', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wanshan-'))
+    const file = join(dir, 'settings.json')
+    const service = new CredentialService(file, codec)
+    expect(service.save({ baseUrl: 'https://api.example.com/v1', model: 'relay-model', apiKey: 'x' }))
+      .toEqual({ baseUrl: 'https://api.example.com/v1', model: 'relay-model', hasApiKey: true })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('only rejects an empty model id', () => {
     const service = new CredentialService(':memory:', codec)
-    expect(() => service.save({ baseUrl: 'http://example.com/v1', model: 'demo', apiKey: 'x' }))
-      .toThrow('Base URL 必须使用 HTTPS 或 localhost')
+    expect(() => service.save({ baseUrl: 'https://api.deepseek.com/v1', model: '  ', apiKey: 'x' }))
+      .toThrow('请填写模型/接入点 ID')
   })
 })

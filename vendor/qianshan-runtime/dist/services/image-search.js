@@ -6,7 +6,7 @@ exports.searchImages = searchImages;
 /**
  * 素材图片检索：Pexels + Unsplash 双通道
  *
- * - 没配 API key 时自动走 Mock，返回占位图 URL，保证离线可用
+ * - 只有 USE_MOCK=1 时才返回 Mock 占位图；真实模式不会伪造检索结果
  * - 有 key 时并发两个 provider，合并去重
  *
  * 设计演进：
@@ -224,7 +224,7 @@ async function searchPexels(query, perPage = 5) {
     }
 }
 /**
- * 按关键词检索图片。有 key 时 Pexels + Unsplash 双通道并发，无 key 时走 Mock 占位图。
+ * 按关键词检索图片。有 key 时 Pexels + Unsplash 双通道并发；无 key 时真实模式报错。
  *
  * - styleHint：按画面风格给关键词前加地域修饰
  * - 关键词降级：所有 provider 都零结果时自动丢修饰词再试一轮
@@ -235,7 +235,10 @@ async function searchPexels(query, perPage = 5) {
  */
 async function searchImages(keywords, perProvider = 5, styleHint = 'auto') {
     const hasKey = !!(resolveKey('pexels') || resolveKey('unsplash'));
-    if (config_1.USE_MOCK && !hasKey) {
+    if (!hasKey) {
+        if (!config_1.USE_MOCK) {
+            throw new Error('未配置图片搜索 API Key，请配置 PEXELS_API_KEY 或 UNSPLASH_ACCESS_KEY');
+        }
         return mockCandidates(keywords, perProvider * 2);
     }
     const styled = applyStyleHint(keywords, styleHint);
@@ -269,7 +272,10 @@ async function searchImages(keywords, perProvider = 5, styleHint = 'auto') {
         }
         // 本级零结果，进入下一级更宽松关键词
     }
-    // 所有级都空：回退 Mock
-    return mockCandidates(keywords, perProvider * 2);
+    // 所有级都空：真实模式不能伪造 mock 结果
+    if (config_1.USE_MOCK) {
+        return mockCandidates(keywords, perProvider * 2);
+    }
+    return [];
 }
 //# sourceMappingURL=image-search.js.map

@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.llmConfig = exports.LLMConfigService = exports.SCENE_LABELS = void 0;
 // ══════════════════════════════════════════════════════════════════════
-//  LLM Config 服务 — 完全云端化版本
+//  LLM Config 服务 — 云端 + 万山本地配置版本
 //
 //  做的事:
 //   ① 维护 llm_routing 表(scene → providerCode + modelName),给档位/UI 用
@@ -18,6 +18,7 @@ const drizzle_orm_1 = require("drizzle-orm");
 const llm_1 = require("./llm");
 const logger_1 = require("../utils/logger");
 const cloud_llm_config_1 = require("./cloud-llm-config");
+const local_llm_config_1 = require("./local-llm-config");
 /** 启动时默认路由 —— 全部走"lingya"(云端 user_llm_config.providerCode);
  *  用户登录后会被档位系统按真实云端配置重写;若用户云端没 lingya 配置而是其它 provider,
  *  llmTierConfig.syncRoutingTable() 会按当前档位写回真实 providerCode。
@@ -70,8 +71,9 @@ class LLMConfigService {
         await this.reloadIntoRuntime();
     }
     /** 从云端 + DB routing 推到 runtime llm service。
-     *  本地版优先保持云端配置能力;没有千山网页登录态时,允许从环境变量注入
-     *  OpenAI 兼容 LLM key。真实模式缺 key 时会直接报错,不再静默 mock。
+     *  万山商业版优先使用本地模型配置;未配置本地 key 时再兼容千山云端配置;
+     *  两者都没有时允许从环境变量注入 OpenAI 兼容 LLM key。真实模式缺 key
+     *  会直接报错,不再静默 mock。
      */
     async reloadIntoRuntime() {
         const routing = await db_1.db.select().from(schema_1.llmRouting);
@@ -148,12 +150,20 @@ class LLMConfigService {
         }
         let runtimeRouting = routing.map((r) => ({ scene: r.scene, provider: r.provider, model: r.model }));
         const decryptedKeys = Array.from(merged.values());
+        const local = await local_llm_config_1.localLlmConfig.getCredential();
+        if (local) {
+            const provider = local.provider;
+            decryptedKeys.length = 0;
+            decryptedKeys.push({ provider, apiKey: local.apiKey, baseUrl: local.baseUrl, model: local.model });
+            runtimeRouting = runtimeRouting.map((r) => ({ ...r, provider, model: local.model || r.model }));
+            logger_1.logger.info(`[LLMConfig] using local saved LLM provider=${provider} model=${local.model || 'routing-default'}`);
+        }
         if (decryptedKeys.length === 0) {
             const env = envCredential();
             if (env) {
                 const provider = env.provider || 'local_env';
                 const model = env.model;
-                decryptedKeys.push({ provider, apiKey: env.apiKey, baseUrl: env.baseUrl });
+                decryptedKeys.push({ provider, apiKey: env.apiKey, baseUrl: env.baseUrl, model });
                 runtimeRouting = runtimeRouting.map((r) => ({ ...r, provider, model: model || r.model }));
                 logger_1.logger.info(`[LLMConfig] using local env LLM provider=${provider} model=${model || 'routing-default'}`);
             }

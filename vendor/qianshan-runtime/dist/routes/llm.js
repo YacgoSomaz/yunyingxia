@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 // ══════════════════════════════════════════════════════════════════════
-//  /api/llm/* —— 完全云端化版本
+//  /api/llm/* —— 云端 + 万山本地配置版本
 //
 //  本地 llm_keys 表已彻底废弃,所有 key/baseUrl 都走云端 user_llm_config。
 //  下面 routes 只保留三类:
@@ -20,6 +20,7 @@ const llm_tiers_1 = require("../services/llm-tiers");
 const sse_manager_1 = require("../services/sse-manager");
 const cloud_llm_config_1 = require("../services/cloud-llm-config");
 const license_1 = require("../services/license");
+const local_llm_config_1 = require("../services/local-llm-config");
 const router = (0, express_1.Router)();
 const ok = (data) => ({ success: true, data });
 const fail = (err) => ({ success: false, error: String(err?.message || err) });
@@ -93,6 +94,45 @@ router.post('/routing/reset', async (_req, res) => {
 });
 router.get('/scene-labels', (_req, res) => {
     res.json(ok(llm_config_1.SCENE_LABELS));
+});
+// ─────────────────────────────────────────────────────────
+// 万山本地模型配置
+// ─────────────────────────────────────────────────────────
+router.get('/local-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.getPublicConfig()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-config', async (req, res) => {
+    try {
+        const saved = await local_llm_config_1.localLlmConfig.save(req.body || {});
+        await llm_config_1.llmConfig.reloadIntoRuntime();
+        res.json(ok(saved));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.delete('/local-config', async (_req, res) => {
+    try {
+        const cleared = await local_llm_config_1.localLlmConfig.remove();
+        await llm_config_1.llmConfig.reloadIntoRuntime();
+        res.json(ok(cleared));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-config/test', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.test(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
 });
 // ─────────────────────────────────────────────────────────
 // 档位系统
@@ -400,7 +440,7 @@ router.get('/cloud-status', async (_req, res) => {
         const m = (0, license_1.getMemberInfo)();
         const hasToken = !!m?.accessToken;
         if (!hasToken) {
-            return res.json(ok({ hasToken: false, configs: {}, manageUrl: 'https://qianshanai.cn/user/llm-configs' }));
+            return res.json(ok({ hasToken: false, configs: {}, manageUrl: null, local: await local_llm_config_1.localLlmConfig.getPublicConfig() }));
         }
         const [llmList, imgList, vidList, voiceList] = await Promise.all([
             (0, cloud_llm_config_1.getCloudConfigs)('llm').catch(() => null),
@@ -416,7 +456,8 @@ router.get('/cloud-status', async (_req, res) => {
                 video: vidList?.configs.length || 0,
                 voice: voiceList?.configs.length || 0,
             },
-            manageUrl: 'https://qianshanai.cn/user/llm-configs',
+            manageUrl: null,
+            local: await local_llm_config_1.localLlmConfig.getPublicConfig(),
         }));
     }
     catch (err) {

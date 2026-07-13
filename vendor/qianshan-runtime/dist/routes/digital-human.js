@@ -28,6 +28,12 @@ router.get('/prefs', (_req, res) => {
 });
 const PrefsUpdateSchema = zod_1.z.object({
     provider: zod_1.z.enum(['aliyun_wan_s2v', 'baidu_xiling_photo']).optional(),
+    aliyun: zod_1.z
+        .object({
+        apiKey: zod_1.z.string().max(256).optional(),
+        model: zod_1.z.string().max(64).optional(),
+    })
+        .optional(),
     xiling: zod_1.z
         .object({
         appId: zod_1.z.string().max(64).optional(),
@@ -59,7 +65,7 @@ router.put('/prefs', (0, validate_1.validateBody)(PrefsUpdateSchema), (req, res)
  */
 router.post('/prefs/test', async (_req, res) => {
     try {
-        const { provider, xiling } = digital_human_prefs_1.digitalHumanPrefs.getResolved();
+        const { provider, aliyun, xiling } = digital_human_prefs_1.digitalHumanPrefs.getResolved();
         if (provider === 'baidu_xiling_photo') {
             if (!xiling) {
                 return res.status(400).json(fail('曦灵 AppID 或 AppKey 未配置'));
@@ -89,15 +95,22 @@ router.post('/prefs/test', async (_req, res) => {
                 message: '签名生成成功;实际生成请用真分镜验证(避免无谓计费)',
             }));
         }
-        // 阿里路径:只校验 voice 类云端 key 拉得到
+        // 阿里路径:优先本地百炼 key,兼容旧版云端 voice key
+        if (aliyun?.apiKey) {
+            return res.json(ok({
+                provider,
+                model: aliyun.model || 'wan2.2-s2v',
+                message: '本地百炼 Key 已配置,可调用阿里万相 wan2.2-s2v',
+            }));
+        }
         const { getCloudDefault } = require('../services/cloud-llm-config');
         const cloud = await getCloudDefault('voice', 'aliyun_dashscope');
         if (!cloud?.apiKey) {
             return res
                 .status(400)
-                .json(fail('阿里数字人复用云端 voice 类百炼 key,但当前未拉到 — 请到 qianshanai.cn 配置'));
+                .json(fail('阿里数字人未配置本地百炼 Key,也未拉到旧版云端 voice 类百炼 Key'));
         }
-        return res.json(ok({ provider, message: '阿里 voice 类 key 拉取成功,可正常调用 wan2.2-s2v' }));
+        return res.json(ok({ provider, message: '旧版云端 voice 类 key 拉取成功,可调用 wan2.2-s2v' }));
     }
     catch (err) {
         res.status(500).json(fail(err));

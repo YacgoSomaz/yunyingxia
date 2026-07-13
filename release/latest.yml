@@ -1,8 +1,8 @@
-version: 0.1.8
-releaseDate: 2026-07-13T01:11:47.308Z
-path: WanshanMediaSetup_0.1.8.exe
-sha512: 67nYXv37hDG5ivgQqtlh/KbDGLO0Joz8RizG8onjUS7c8tHM5aRMNImOdQdw39BXckwFcwDTIHaI6EeHjMpRwQ==
+version: 0.1.9
+releaseDate: 2026-07-13T04:17:38.402Z
+path: WanshanMediaSetup_0.1.9.exe
+sha512: i217M2L26+MhTB2SaAFA3ruojz0Ql8cGQmrJHn3tWaa8fyNXDT3dA5Ss8eygTLmC1zM+ammS8mD9IixORPe07A==
 files:
-  - url: WanshanMediaSetup_0.1.8.exe
-    sha512: 67nYXv37hDG5ivgQqtlh/KbDGLO0Joz8RizG8onjUS7c8tHM5aRMNImOdQdw39BXckwFcwDTIHaI6EeHjMpRwQ==
-    size: 173035100
+  - url: WanshanMediaSetup_0.1.9.exe
+    sha512: i217M2L26+MhTB2SaAFA3ruojz0Ql8cGQmrJHn3tWaa8fyNXDT3dA5Ss8eygTLmC1zM+ammS8mD9IixORPe07A==
+    size: 173038533

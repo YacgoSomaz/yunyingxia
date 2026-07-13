@@ -35,6 +35,10 @@ const TASK_BASE = 'https://dashscope.aliyuncs.com/api/v1/tasks/';
 const MODEL = 'wan2.2-s2v';
 /** 取百炼 API key — 复用 voice 类配置 */
 async function getDashscopeKey() {
+    const local = digital_human_prefs_1.digitalHumanPrefs.getResolved().aliyun?.apiKey;
+    if (local) {
+        return local;
+    }
     try {
         const cloud = await (0, cloud_llm_config_1.getCloudDefault)('voice', 'aliyun_dashscope');
         return cloud?.apiKey || null;

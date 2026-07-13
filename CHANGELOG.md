@@ -2,10 +2,20 @@
 
 ## 未发布
 
+- 暂无。
+
+## 0.1.9 - 2026-07-13
+
 - 客户端商业授权后台自动校验间隔调整为 10 分钟。
 - 本地缓存授权已过期时继续清理授权缓存，并通过主进程退出应用，要求重新激活。
 - 文案工坊真实模式不再静默降级到 MockLLMClient；缺少 LLM Key 时明确报错。
 - 原千山运行时增加本地环境变量 LLM Key 注入，支持 `LLM_API_KEY`、`OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`DEEPSEEK_API_KEY`、`SILICONFLOW_API_KEY`、`ARK_API_KEY`。
+- 设置页增加“万山本地模型配置”，支持本地保存 OpenAI 兼容模型 Base URL、模型名和 API Key；本地配置优先于千山云端 LLM 配置。
+- 本地 LLM API Key 使用 Electron `safeStorage` 加密保存，界面和接口只返回脱敏状态。
+- 本地模型配置面向中转站适配：默认使用“自定义中转站”，允许填写客户自己的 OpenAI 兼容 Base URL、模型/接入点 ID 和 API Key，不做厂商白名单限制。
+- 图片搜索真实模式不再在无图源 Key 或零结果时返回 mock 占位图。
+- 设置页增加“数字人供应商配置”，支持阿里万相 `wan2.2-s2v` 和百度曦灵照片数字人。
+- 阿里万相数字人优先读取本地百炼 Key，百度曦灵读取本地 AppID/AppKey；数字人配置接口支持保存和测试。
 
 ## 0.1.8 - 2026-07-13
 

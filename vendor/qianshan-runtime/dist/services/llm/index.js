@@ -108,7 +108,7 @@ class LLMService {
     clients = new Map();
     /** 场景路由:scene → { provider(=云端 providerCode), model } */
     routing = new Map();
-    /** 已配置的凭据:provider(=云端 providerCode) → { apiKey, baseUrl } */
+    /** 已配置的凭据:provider(=云端 providerCode) → { apiKey, baseUrl, model } */
     credentials = new Map();
     /** ——— 由 llm-config 在启动后调用,注入云端配置 ——— */
     setRouting(routing) {
@@ -121,7 +121,7 @@ class LLMService {
         this.credentials.clear();
         this.clients.clear(); // 清 client 池(凭据可能变了)
         for (const c of creds) {
-            this.credentials.set(c.provider, { apiKey: c.apiKey, baseUrl: c.baseUrl || undefined });
+            this.credentials.set(c.provider, { apiKey: c.apiKey, baseUrl: c.baseUrl || undefined, model: c.model || undefined });
         }
     }
     /** 当前已注册的 provider 集合(不含 mock) */
@@ -153,9 +153,10 @@ class LLMService {
             }
             throw new Error(`未配置可用的 AI 文案模型凭据(provider=${provider})。请设置 LLM_API_KEY/OPENAI_API_KEY，或启用 WANSHAN_USE_MOCK=1 进入离线演示。`);
         }
-        const cacheKey = `${provider}::${model || 'default'}::${cred.baseUrl || ''}::${cred.apiKey.slice(0, 6)}`;
+        const effectiveModel = model || cred.model;
+        const cacheKey = `${provider}::${effectiveModel || 'default'}::${cred.baseUrl || ''}::${cred.apiKey.slice(0, 6)}`;
         if (!this.clients.has(cacheKey)) {
-            this.clients.set(cacheKey, this.buildClient(provider, cred.apiKey, model, cred.baseUrl));
+            this.clients.set(cacheKey, this.buildClient(provider, cred.apiKey, effectiveModel, cred.baseUrl));
         }
         return this.clients.get(cacheKey);
     }
