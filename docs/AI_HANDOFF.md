@@ -6,7 +6,7 @@
 
 万山自媒体要尽量复刻原千山自媒体的前端效果和功能，同时加入商业授权、更新器、安装包加固和本地数据安全策略。
 
-当前最新版本：`0.1.7`
+当前最新版本：`0.1.8`
 
 当前主分支：`main`
 
@@ -83,7 +83,7 @@ npm start
 
 ```powershell
 pwsh -File packaging\build\build_release.ps1 `
-  -Version 0.1.7 `
+  -Version 0.1.8 `
   -Commercial `
   -LicenseServerUrl "https://license.runmo.art" `
   -ProductCode "wanshan_zimeiti" `
@@ -105,11 +105,13 @@ pwsh -File packaging\build\build_release.ps1 `
 - asar 内 `commercial-config.json` 的 `productCode` 是 `wanshan_zimeiti`
 - asar 内没有 `.py/.ts/.tsx/.map/.env/.pem/.key/.db/.sqlite/.md`
 - asar 内没有 `src/`、`test/`、`tests/`、`__tests__/`
+- asar 内所有依赖 `package.json` 的 `main/module` 入口都真实存在，不能再出现指向已删除 `src/...` 的入口
 - `integrity_manifest.json` 有签名
 - 授权后台创建 `wanshan_zimeiti` 卡密后，激活 payload 里 product_code 是 `wanshan_zimeiti`
 - 用 `wanshan_zimeiti` 卡密激活 `wanshan_media` 应该失败
 - 线上 `latest.json` 可访问
 - 安装包下载支持 Range
+- 覆盖安装后启动，用 Playwright/Electron 至少跑一遍主界面冒烟测试；如果当前 Codex 进程没有管理员权限，必须记录 UAC/目录权限限制并从 `release/stage` 做替代启动验证
 
 ## 授权行为边界
 
@@ -136,4 +138,3 @@ pwsh -File packaging\build\build_release.ps1 `
 - 正式发布前建议迁移安装包到 COS/OSS/CDN，再设置 `-UpdateAssetBaseUrl`。
 - 管理后台前端目前是轻量静态页面，后续如继续多产品扩展，建议抽象产品配置，避免手写 HTML 字符串难维护。
 - 需要继续用 Playwright 扫描原千山前端功能差异，目标是效果和功能尽量一致。
-

@@ -116,6 +116,34 @@ $commercialConfig = [ordered]@{
 }
 $commercialConfig | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $appRoot 'commercial-config.json') -Encoding UTF8
 
+Write-Host "迁移第三方依赖中指向 src/ 的运行入口"
+$runtimeNodeModules = Join-Path $appRoot 'vendor\qianshan-runtime\node_modules'
+if (Test-Path $runtimeNodeModules) {
+  foreach ($packageJsonFile in Get-ChildItem $runtimeNodeModules -Recurse -File -Filter 'package.json' -ErrorAction SilentlyContinue) {
+    $packageRoot = $packageJsonFile.Directory.FullName
+    $packageJsonText = Get-Content $packageJsonFile.FullName -Raw
+    $packageJson = $packageJsonText | ConvertFrom-Json
+    $changedPackageJson = $false
+    foreach ($field in @('main', 'module')) {
+      $entry = [string]$packageJson.$field
+      if ($entry -match '^(?:\./)?src[\\/]') {
+        $srcDir = Join-Path $packageRoot 'src'
+        $distDir = Join-Path $packageRoot 'dist'
+        if (-not (Test-Path $srcDir)) { throw "依赖入口指向 src 但目录不存在: $($packageJsonFile.FullName) -> $entry" }
+        if (Test-Path $distDir) { Remove-Item $distDir -Recurse -Force }
+        Copy-Item $srcDir $distDir -Recurse -Force
+        $packageJson.$field = ($entry -replace '^(?:\./)?src([\\/])', './dist/')
+        $changedPackageJson = $true
+      }
+    }
+    if ($changedPackageJson) {
+      $packageJson |
+        ConvertTo-Json -Depth 50 -Compress:$false |
+        Set-Content $packageJsonFile.FullName -Encoding UTF8
+    }
+  }
+}
+
 $removePatterns = @(
   '*.map', '*.ts', '*.tsx', '*.py', '*.pyc', '*.md', '*.log', '*.db', '*.sqlite', '*.sqlite3', '*.pem', '*.key',
   '*.c', '*.cc', '*.cpp', '*.cxx', '*.h', '*.hh', '*.hpp'

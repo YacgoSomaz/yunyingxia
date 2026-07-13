@@ -2,7 +2,7 @@
 
 万山自媒体是一套本地优先的 AI 自媒体桌面工作台，目标是复刻并延续原千山自媒体的核心体验，把选题、文案、提示词模板、视频处理、平台数据和更新授权集中到一个 Windows 客户端中。
 
-当前商业版最新版本：`0.1.7`
+当前商业版最新版本：`0.1.8`
 
 远端仓库：<https://github.com/YacgoSomaz/qianshanzimeiti>
 
@@ -92,7 +92,7 @@ npm start
 
 ```powershell
 pwsh -File packaging\build\build_release.ps1 `
-  -Version 0.1.7 `
+  -Version 0.1.8 `
   -Commercial `
   -LicenseServerUrl "https://license.runmo.art" `
   -ProductCode "wanshan_zimeiti" `
@@ -105,16 +105,16 @@ pwsh -File packaging\build\build_release.ps1 `
 当前发布产物：
 
 ```text
-release/WanshanMediaSetup_0.1.7.exe
-SHA256: 783C196B54739F1E9526CD2725A08A2E36751669072B47CCBDC2DB3EC92D8355
-Size: 173,014,523 bytes
+release/WanshanMediaSetup_0.1.8.exe
+SHA256: 24629D909C429B91B675E22F0C2091F45610B1BA6FF72083D0F22F0E6A851763
+Size: 173,035,100 bytes
 ```
 
 线上更新源：
 
 ```text
 https://license.runmo.art/wanshan-media/updates/latest.json
-https://license.runmo.art/wanshan-media/updates/WanshanMediaSetup_0.1.7.exe
+https://license.runmo.art/wanshan-media/updates/WanshanMediaSetup_0.1.8.exe
 ```
 
 当前安装包暂时托管在授权服务器。正式大量分发建议将安装包迁移到腾讯云 COS、阿里云 OSS 或国内 CDN，再用 `-UpdateAssetBaseUrl` 写入正式下载地址，避免 3M VPS 承载大文件下载。

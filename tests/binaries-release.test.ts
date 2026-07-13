@@ -60,4 +60,15 @@ describe("bundled media binaries", () => {
     expect(buildScript).toContain("forbiddenDirs");
     expect(buildScript).toContain("源码/测试目录");
   });
+
+  it("moves runtime dependency entrypoints out of src before pruning source directories", () => {
+    const buildScript = readFileSync(
+      join(projectRoot, "packaging", "build", "build_release.ps1"),
+      "utf8",
+    );
+
+    expect(buildScript).toContain("迁移第三方依赖中指向 src/ 的运行入口");
+    expect(buildScript).toContain("$packageJson.$field");
+    expect(buildScript).toContain("./dist/");
+  });
 });
