@@ -1,8 +1,8 @@
-# 万山自媒体
+# 运营虾
 
-万山自媒体是一套本地优先的 AI 自媒体桌面工作台，目标是复刻并延续原千山自媒体的核心体验，把选题、文案、提示词模板、视频处理、平台数据和更新授权集中到一个 Windows 客户端中。
+运营虾是一套本地优先的 AI 自媒体桌面工作台，目标是复刻并延续原千山自媒体的核心体验，把选题、文案、提示词模板、视频处理、平台数据和更新授权集中到一个 Windows 客户端中。
 
-当前商业版最新版本：`0.1.9`
+当前商业版最新版本：`0.1.10`
 
 远端仓库：<https://github.com/YacgoSomaz/qianshanzimeiti>
 
@@ -13,40 +13,45 @@
 - 提示词模板：迁移原千山内置模板和风格预设，避免下拉菜单空缺。
 - 视频工坊：复用原千山运行时中的一键生成、视频生成和媒体处理能力。
 - 平台数据：允许可信第三方平台的公开数据和登录态数据接入，不做绝对离线。
-- 商业授权：使用远端卡密、设备绑定、Ed25519 签名授权包、本地安全缓存和 10 分钟授权刷新。
-- 国内更新：客户端读取 `latest.json`，安装包支持 HTTPS 下载和 SHA512 校验。
+- 商业账号：使用手机号短信登录、普通用户默认无权限、微信支付充值开通会员，本地仅缓存账号会话并每 10 分钟刷新权限。
+- 受签名更新：客户端固定请求 `GET https://anyq.site/api/v1/releases/latest?product_id=operation_shrimp`，只接受 `update-v1` Ed25519 签名载荷中的 HTTPS 安装包地址，并在下载后核验 SHA-256。
 
-## 关键产品码
+## 商业账号系统
 
-远端授权后台同时服务多个软件，产品码必须严格隔离：
-
-| 软件 | product_code | 卡密前缀 | 策略 |
-| --- | --- | --- | --- |
-| 万山自媒体 | `wanshan_zimeiti` | `WSZ-` | 空策略 `{}` |
-| 万山漫剧 | `wanshan_media` | `WSM-` | 空策略 `{}` |
-| 直播复盘侠 | `live_replay_xia` | `LRX-` | 直播监听/水印策略 |
-
-万山自媒体客户端只接受 `product_code=wanshan_zimeiti` 的授权包。不能再使用 `wanshan_media`，否则会和万山漫剧卡密互通。
-
-授权公钥：
+商业版启动时先连接账号服务：
 
 ```text
-YYHkNVmcsiWjoYweNOa7CEBP3WGRyBbB6Cf3_qvQchc
+https://anyq.site
 ```
 
-公钥可以公开，只用于客户端验签；服务端私钥不能进入仓库、安装包或客户端。
+账号流程：
+
+- `POST /api/auth/send-code`：发送手机号短信验证码。
+- `POST /api/auth/login`：验证码登录，服务端写入 HttpOnly Session Cookie。
+- `GET /api/auth/me`：读取当前账号、能量余额和会员到期时间。
+- `GET /api/pay/plans`：读取充值套餐。
+- `POST /api/pay/wechat/create`：创建微信 Native 支付二维码订单。
+- `GET /api/pay/wechat/status/:orderNo`：轮询订单状态。
+
+权限规则：
+
+- 新手机号登录后自动创建普通用户。
+- 普通用户默认无功能权限，不能进入商业功能。
+- 支付成功后服务端增加 `energy_balance`，写入 `membership_expires_at` 和 `membership_plan`。
+- 客户端仅在 `membership_expires_at` 未过期且 `energy_balance > 0` 时进入主软件。
+- 运行中每 10 分钟刷新一次账号权限；会员过期、余额不足或会话失效时退出软件。
 
 ## 项目结构
 
 ```text
-electron/                         Electron 主进程、授权、完整性校验、更新器
+electron/                         Electron 主进程、账号登录、完整性校验、更新器
 src/                              React 本地壳，用于开发态 UI
 vendor/qianshan-runtime/          复用原千山运行时、后端服务和渲染器构建产物
 resources/bin/                    ffmpeg、ffprobe、yt-dlp 等媒体二进制
 packaging/build/                  商业包构建、asar 打包、完整性清单签名
 packaging/installer/              Inno Setup 安装器脚本
 scripts/                          Playwright/Electron 自动测试和提示词抓取工具
-tests/                            Vitest 单元/构建/授权/更新测试
+tests/                            Vitest 单元/构建/账号/更新测试
 release/                          安装包和更新清单，exe 使用 Git LFS
 docs/AI_HANDOFF.md                给后续 AI/Fork 的快速接手说明
 CHANGELOG.md                      版本变更记录
@@ -76,7 +81,7 @@ npm start
 
 默认不启用 Mock，真实数据模式会访问公开热点、可信平台接口、用户主动登录的平台数据和用户配置的 AI 服务。
 
-文案工坊真实生成需要可用的 OpenAI 兼容 LLM Key。优先在客户端“设置/环境体检”里的“万山本地模型配置”填写：
+文案工坊真实生成需要可用的 OpenAI 兼容 LLM Key。优先在客户端“设置/AI 模型”里的“运营虾本地模型配置”填写：
 
 ```text
 Provider: local_deepseek
@@ -114,64 +119,61 @@ npm start
 商业版会：
 
 - 写入 `commercial-config.json`
-- 注入授权服务器、公钥、产品码和更新源
+- 注入账号服务地址、更新验签公钥和完整性清单公钥
 - 清理源码、测试、`.map`、`.env`、数据库、密钥、C/C++ 源码和 `src/` 目录
 - 生成并签名 `integrity_manifest.json`
 - 打包 `app.asar`
 - 生成 Inno Setup 安装包
-- 生成 `latest.json` 和 `latest.yml`
 
 构建命令示例：
 
 ```powershell
-pwsh -File packaging\build\build_release.ps1 `
+pwsh -File packaging\build\build_yunyingxia_release.ps1 `
   -Version 0.1.9 `
   -Commercial `
-  -LicenseServerUrl "https://license.runmo.art" `
-  -ProductCode "wanshan_zimeiti" `
-  -UpdateFeedUrl "https://license.runmo.art/wanshan-media/updates/latest.json" `
-  -UpdateAssetBaseUrl "" `
-  -IntegrityPrivateKeyPath "C:\Users\q2414\.wanshan\wanshan-integrity-private.pem" `
-  -LicensePublicKey "YYHkNVmcsiWjoYweNOa7CEBP3WGRyBbB6Cf3_qvQchc"
+  -AccountServerUrl "https://anyq.site" `
+  -ProductCode "operation_shrimp" `
+  -UpdatePublicKey "<update-v1 Ed25519 public key>" `
+  -IntegrityPrivateKeyPath "C:\Users\q2414\.wanshan\wanshan-integrity-private.pem"
 ```
+
+也可以直接双击项目根目录的 `build_yunyingxia_release.bat`，输入版本号后开始商业版构建。该入口会固定使用运营虾的产品码、账号服务和更新验签公钥，并检查完整性私钥是否存在。Windows 代码签名仍需在证书工具配置完成后，通过 PowerShell 构建参数启用。
 
 当前发布产物：
 
 ```text
-release/WanshanMediaSetup_0.1.9.exe
-SHA256: 07B4106C7E2C5ABD493C3DA4E3DD648E6E46E0E283F2EBE1AA095D96576F9F19
-Size: 173,038,533 bytes
+release/YunyingxiaSetup_0.1.12.exe
+SHA256: 98B405ECFB5D322ADA93A5BF37BAAD9099E4EE0995A8193E473C35FBA4165F17
+Size: 184,920,435 bytes
 ```
 
-线上更新源：
+更新协议：
 
-```text
-https://license.runmo.art/wanshan-media/updates/latest.json
-https://license.runmo.art/wanshan-media/updates/WanshanMediaSetup_0.1.9.exe
-```
+- 客户端只请求 `GET /api/v1/releases/latest?product_id=operation_shrimp`，不会读取 OSS/COS 文件列表、`latest.json` 或未签名根字段。
+- 服务端返回的 `update_release` 必须是 `key_id=update-v1` 的 Ed25519 签名信封；客户端只内置对应公钥，绝不包含私钥。
+- 客户端验签后校验版本、产品受众、签发方、签名有效期、文件大小、SHA-256，以及无 query/hash 的 `https://download.anyq.site/*.exe` 下载地址；不符合即拒绝更新。
+- 签名载荷的 `mandatory=true`，或本地版本低于 `min_supported_version` 时，客户端会在创建主窗口前阻止启动；其余更新只提示，允许用户稍后安装。
+- 每个发布包使用 `release/operation-shrimp/<version>/YunyingxiaSetup_<version>.exe` 独立目录；只发布完整、最终代码签名后的安装包。
+- 手动重复点击安装包时会启动已安装的运营虾；客户端发起的已签名更新使用 `/UPDATE` 参数继续覆盖升级。
 
-当前安装包暂时托管在授权服务器。正式大量分发建议将安装包迁移到腾讯云 COS、阿里云 OSS 或国内 CDN，再用 `-UpdateAssetBaseUrl` 写入正式下载地址，避免 3M VPS 承载大文件下载。
+## 账号安全要点
 
-## 授权安全要点
-
-- 服务端返回 `license.payload + license.signature` 的 Ed25519 签名信封。
-- 客户端只内置公钥，不内置私钥。
-- 客户端验签后校验 `product_code`、设备哈希、到期时间、功能权限和策略。
-- 显式过期卡密到期即失效，不额外加离线宽限。
-- 客户端启动时主动刷新授权，运行中约 10 分钟刷新一次。
-- 后台冻结、过期、解绑或禁用后，客户端收到明确拒绝会清除本地授权缓存。
-- 网络临时失败才允许在签名宽限期内继续使用。
-- `safeStorage` 只保护本地缓存门槛，不保存后台管理员 token、服务端私钥或 API Key。
-- `asar` 不是加密，只是打包；核心安全依靠服务端授权、签名验签、完整性校验和发布目录清理。
+- 短信 AccessKey、微信支付商户私钥、API v3 Key 只保存在账号服务端 `.env` 和服务器密钥目录。
+- 客户端不保存短信密钥、微信支付密钥、后台管理员 token 或服务端私钥。
+- 客户端只保存账号会话 Cookie，使用 Electron `safeStorage` 加密本地缓存。
+- 普通用户默认无权限；真正的功能开关由服务端余额、会员到期时间和后续套餐策略控制。
+- 客户端启动时主动查询账号权限，运行中约 10 分钟刷新一次。
+- 会话失效、会员过期或余额不足时，客户端退出并要求重新登录/充值。
+- `asar` 不是加密，只是打包；核心安全依靠服务端权限、完整性校验和发布目录清理。
 
 ## 数据与隐私
 
-- 用户数据、Cookie、数据库、日志和授权缓存放在 `%LOCALAPPDATA%\WanshanMedia\data`，不放安装目录。
+- 用户数据、第三方平台 Cookie、数据库、日志和账号会话缓存放在 `%LOCALAPPDATA%\Yunyingxia\data`，不放安装目录；首次启动会自动迁移旧 `%LOCALAPPDATA%\WanshanMedia` 数据。
 - 安装包不应包含 `.env`、私钥、开发文档、测试文件、源码映射、数据库、日志或用户数据。
-- 对外网络访问主要包括授权服务器、更新源、公开热点/平台数据、用户主动配置的 AI API。
+- 对外网络访问主要包括账号服务、更新源、公开热点/平台数据、用户主动配置的 AI API。
 - LLM Key 不进入仓库、安装包、README、更新日志或完整性清单，只存在用户本机数据目录。
 - 自定义中转站会接收用户提示词和生成内容，销售/交付时按客户自己的中转站配置说明交付。
-- 第三方平台网页登录态由用户自己控制，不由万山自媒体托管。
+- 第三方平台网页登录态由用户自己控制，不由运营虾托管。
 
 ## 交接入口
 
@@ -179,7 +181,7 @@ https://license.runmo.art/wanshan-media/updates/WanshanMediaSetup_0.1.9.exe
 
 1. `docs/AI_HANDOFF.md`
 2. `CHANGELOG.md`
-3. `electron/license-service.ts`
+3. `electron/account-service.ts`
 4. `electron/commercial-config.ts`
 5. `packaging/build/build_release.ps1`
 6. `vendor/qianshan-runtime/dist/routes/one-click.js`

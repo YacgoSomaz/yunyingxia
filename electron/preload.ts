@@ -16,7 +16,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
   publisherLogin: (accountId: number) => ipcRenderer.invoke('publisher:login', accountId),
-  activateLicense: (cardKey: string) => ipcRenderer.invoke('license:activate', cardKey),
+  account: {
+    me: () => ipcRenderer.invoke('account:me'),
+    plans: () => ipcRenderer.invoke('account:plans'),
+    sendCode: (phone: string) => ipcRenderer.invoke('account:sendCode', phone),
+    login: (phone: string, code: string) => ipcRenderer.invoke('account:login', phone, code),
+    logout: () => ipcRenderer.invoke('account:logout'),
+    openRechargePortal: () => ipcRenderer.invoke('account:openRechargePortal'),
+  },
   update: {
     checkNow: () => ipcRenderer.invoke('update:check'),
     installNow: () => ipcRenderer.invoke('update:install'),

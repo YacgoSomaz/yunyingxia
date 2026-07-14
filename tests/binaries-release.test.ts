@@ -46,7 +46,59 @@ describe("bundled media binaries", () => {
 
     expect(buildScript).toContain("resources/app.asar.unpacked");
     expect(buildScript).toContain("sharp-win32-x64.node");
-    expect(installerScript).toContain("{app}\\resources\\app.asar.unpacked");
+    expect(installerScript).toContain('Name: "{app}\\resources"');
+    expect(installerScript).toContain("CloseApplicationsFilter=Yunyingxia.exe,WanshanMedia.exe");
+    expect(installerScript).toContain('CloseApplications=yes');
+    expect(installerScript).toContain('退出运营虾后重试');
+    expect(installerScript).toContain('tasklist /FI');
+    expect(installerScript).toContain('SignTool');
+    expect(installerScript).toContain('AppId={{B5D3D2EF-32D0-4E9B-A9CB-6CFEF7F0D7D6}');
+    expect(installerScript).toContain('ValueName: "InstallDir"');
+    expect(installerScript).toContain('function InitializeSetup(): Boolean;');
+    expect(installerScript).toContain('function IsUpdateInvocation(): Boolean;');
+    expect(installerScript).toContain("ParamStr(Index), '/UPDATE'");
+    expect(installerScript).toContain('已安装运营虾，现已为你打开程序。');
+    expect(installerScript).toContain('{autopf}\\Yunyingxia\\Yunyingxia.exe');
+    expect(installerScript).toContain('Name: "{app}\\resources"');
+    expect(installerScript).toContain('RemoveUserDataOnUninstall');
+  });
+
+  it("keeps installers in an immutable product/version directory and reserves real signing hooks", () => {
+    const buildScript = readFileSync(join(projectRoot, "packaging", "build", "build_release.ps1"), "utf8");
+    expect(buildScript).toContain("operation-shrimp");
+    expect(buildScript).toContain("$Version");
+    expect(buildScript).toContain("CodeSignTool");
+    expect(buildScript).toContain("InnoSignToolCommand");
+    expect(buildScript).toContain("Get-FileHash");
+  });
+
+  it("tracks versioned installer directories through Git LFS", () => {
+    const attributes = readFileSync(join(projectRoot, ".gitattributes"), "utf8");
+    expect(attributes).toContain("release/**/*.exe filter=lfs");
+  });
+
+  it("keeps a clearly named Yunyingxia release entrypoint that forwards build options", () => {
+    const entrypoint = readFileSync(
+      join(projectRoot, "packaging", "build", "build_yunyingxia_release.ps1"),
+      "utf8",
+    );
+    const packageJson = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8"));
+
+    expect(entrypoint).toContain("Join-Path $PSScriptRoot 'build_release.ps1'");
+    expect(entrypoint).toContain("& $scriptPath @forwardedParameters");
+    expect(packageJson.scripts["package:yunyingxia"]).toContain(
+      "build_yunyingxia_release.ps1",
+    );
+  });
+
+  it("ships a double-clickable commercial release batch entrypoint", () => {
+    const batchFile = readFileSync(join(projectRoot, "build_yunyingxia_release.bat"), "utf8");
+
+    expect(batchFile).toContain("packaging\\build\\build_yunyingxia_release.ps1");
+    expect(batchFile).toContain("operation_shrimp");
+    expect(batchFile).toContain("-Commercial");
+    expect(batchFile).toContain("-IntegrityPrivateKeyPath");
+    expect(batchFile).toContain("Release version");
   });
 
   it("rejects source directories and native build source files from commercial packages", () => {

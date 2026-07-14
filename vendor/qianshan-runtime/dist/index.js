@@ -192,10 +192,10 @@ async function createWindow() {
         height: 900,
         minWidth: 1100,
         minHeight: 700,
-        title: '千山自媒体助手',
+        title: '运营虾',
         icon: winIcon,
         show: false, // 先隐藏，等页面加载完再显示，避免黑屏
-        backgroundColor: '#0D1117', // 深色背景，避免白闪
+        backgroundColor: '#f7f8fa',
         webPreferences: {
             preload: path_1.default.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -227,7 +227,7 @@ async function createWindow() {
 // Windows 任务栏图标分组 + 提示用 AUMID（让任务栏不再聚合到 electron.exe 名下，
 // 也提升自定义 icon 在某些 Windows 版本下被识别的概率）
 if (process.platform === 'win32') {
-    electron_1.app.setAppUserModelId('com.qianshan.ai');
+    electron_1.app.setAppUserModelId('com.yunyingxia.desktop');
 }
 // 隐藏顶部默认菜单栏（File / Edit / View / Window / Help）
 // macOS 保留系统菜单（习惯不同，且 macOS 应用菜单是必备项）

@@ -82,7 +82,7 @@
           el.textContent = '本地模型配置';
           continue;
         }
-        el.textContent = '本地 AI 模型配置：在“万山本地模型配置”里填写中转站 Base URL、模型/接入点 ID 和 API Key，保存后立即生效，不需要去远端网页配置。';
+        el.textContent = '本地 AI 模型配置：在“运营虾本地模型配置”里填写中转站 Base URL、模型/接入点 ID 和 API Key，保存后立即生效，不需要去远端网页配置。';
       }
     }
   }
@@ -363,7 +363,7 @@
           #${PANEL_ID} .ws-grid { grid-template-columns: 1fr; }
         }
       </style>
-      <div class="ws-title">万山本地模型配置</div>
+      <div class="ws-title">运营虾本地模型配置</div>
       <div class="ws-grid">
         <label>服务商<select name="provider">
           <option value="custom_openai">自定义中转站</option>
@@ -398,7 +398,7 @@
         </select></label>
         <label data-dh-for="baidu_xiling_photo">曦灵 API 地址<input name="xilingBaseUrl" autocomplete="off" value="https://open.xiling.baidu.com"></label>
         <label data-dh-for="baidu_xiling_photo">素材上传方式<select name="xilingUploadMode">
-          <option value="qianshan_temp_upload">千山临时素材上传</option>
+          <option value="qianshan_temp_upload">临时素材上传</option>
           <option value="custom_public_asset">自定义公网素材接口</option>
         </select></label>
         <label data-dh-for="baidu_xiling_photo">公网素材接口 URL<input name="xilingTempUploadUrl" autocomplete="off" placeholder="自定义上传方式才需要"></label>
