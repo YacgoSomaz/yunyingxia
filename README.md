@@ -139,6 +139,12 @@ pwsh -File packaging\build\build_yunyingxia_release.ps1 `
 
 也可以直接双击项目根目录的 `build_yunyingxia_release.bat`，输入版本号后开始商业版构建。该入口会固定使用运营虾的产品码、账号服务和更新验签公钥，并检查完整性私钥是否存在。Windows 代码签名仍需在证书工具配置完成后，通过 PowerShell 构建参数启用。
 
+需要重新创建桌面快捷方式时运行：
+
+```powershell
+pwsh -NoProfile -File scripts\create-yunyingxia-build-shortcut.ps1
+```
+
 当前发布产物：
 
 ```text
