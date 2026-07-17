@@ -38,7 +38,7 @@ if ($Commercial) {
   if ($accountUri.Scheme -ne 'https') { throw '商业版账号服务必须使用 HTTPS' }
   if (-not $AccountPublicKey.Trim()) { throw '商业版构建必须提供 -AccountPublicKey' }
   if (-not $UpdatePublicKey.Trim()) { throw '商业版构建必须提供 -UpdatePublicKey' }
-  if ($ProductCode -notmatch '^[A-Za-z0-9_.-]{1,64}$') { throw "产品代码格式无效: $ProductCode" }
+  if ($ProductCode -ne 'operation_shrimp') { throw '运营虾商业包产品代码必须为 operation_shrimp' }
   if (-not $IntegrityPrivateKeyPath) { throw '商业版构建必须提供 -IntegrityPrivateKeyPath' }
 }
 
@@ -118,12 +118,24 @@ Copy-Item $loginBackgroundImage (Join-Path $stageRoot 'resources\operation-login
 
 Write-Host "[3/7] 复制运行所需的编译产物"
 Copy-Item (Join-Path $ProjectRoot 'package.json') $appRoot -Force
+$packagedPackageJsonPath = Join-Path $appRoot 'package.json'
+$packagedPackageJson = Get-Content $packagedPackageJsonPath -Raw | ConvertFrom-Json
+$packagedPackageJson.version = $Version
+$packagedPackageJson |
+  ConvertTo-Json -Depth 50 -Compress:$false |
+  Set-Content $packagedPackageJsonPath -Encoding UTF8
 Copy-Item (Join-Path $ProjectRoot 'dist-electron') (Join-Path $appRoot 'dist-electron') -Recurse -Force
 New-Item (Join-Path $appRoot 'vendor\qianshan-runtime') -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $runtimeRoot 'package.json') (Join-Path $appRoot 'vendor\qianshan-runtime\package.json') -Force
 foreach ($dir in @('dist', 'renderer', 'drizzle', 'node_modules')) {
   Copy-Item (Join-Path $runtimeRoot $dir) (Join-Path $appRoot "vendor\qianshan-runtime\$dir") -Recurse -Force
 }
+
+$rendererBundlePatch = Join-Path $ProjectRoot 'scripts\patch-renderer-error.cjs'
+Invoke-Step 'node.exe' @(
+  $rendererBundlePatch,
+  (Join-Path $appRoot 'vendor\qianshan-runtime\renderer\dist\assets\index-BponW6ps.js')
+)
 
 Write-Host "[4/7] 写入商业配置并清理源码/开发文件"
 $manifestTool = Join-Path $ProjectRoot 'packaging\build\manifest-tool.cjs'
@@ -206,10 +218,25 @@ $forbiddenDirs = Get-ChildItem $appRoot -Recurse -Directory -Force | Where-Objec
 if ($forbiddenDirs) { throw "发布目录仍包含源码/测试目录: $($forbiddenDirs.FullName -join ', ')" }
 
 Write-Host "[5/7] 生成 integrity_manifest.json"
+$integrityPolicyModule = Join-Path $ProjectRoot 'dist-electron\electron\integrity-policy.js'
+if (-not (Test-Path $integrityPolicyModule)) { throw "缺少完整性策略模块: $integrityPolicyModule" }
+$integrityPolicyRaw = & node.exe -e "const p=require(process.argv[1]);process.stdout.write(JSON.stringify({exactPaths:p.INTEGRITY_PROTECTED_EXACT_PATHS,prefixes:p.INTEGRITY_PROTECTED_PATH_PREFIXES}))" $integrityPolicyModule
+if ($LASTEXITCODE -ne 0) { throw '无法读取完整性策略' }
+$integrityPolicy = $integrityPolicyRaw | ConvertFrom-Json
+$integrityExactPaths = @($integrityPolicy.exactPaths | ForEach-Object { [string]$_ })
+$integrityPrefixes = @($integrityPolicy.prefixes | ForEach-Object { [string]$_ })
+function Test-IntegrityProtectedPath([string]$RelativePath) {
+  if ($integrityExactPaths -contains $RelativePath) { return $true }
+  foreach ($prefix in $integrityPrefixes) {
+    if ($RelativePath.StartsWith($prefix, [StringComparison]::Ordinal)) { return $true }
+  }
+  return $false
+}
 $entries = [ordered]@{}
 foreach ($file in Get-ChildItem $appRoot -Recurse -File -Force) {
   $relative = [IO.Path]::GetRelativePath($appRoot, $file.FullName).Replace('\', '/')
   if ($relative -eq 'integrity_manifest.json') { continue }
+  if (-not (Test-IntegrityProtectedPath $relative)) { continue }
   $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
   $entries[$relative] = [ordered]@{ sha256 = $hash; size = [int64]$file.Length }
 }

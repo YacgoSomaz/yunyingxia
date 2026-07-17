@@ -21,6 +21,9 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=运营虾
 DefaultDirName={autopf}\Yunyingxia
+UsePreviousAppDir=yes
+DisableDirPage=no
+AlwaysShowDirOnReadyPage=yes
 DefaultGroupName={#MyAppName}
 OutputDir={#OutputDir}
 OutputBaseFilename=YunyingxiaSetup_{#MyAppVersion}
@@ -29,7 +32,7 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
-CloseApplications=yes
+CloseApplications=no
 CloseApplicationsFilter=Yunyingxia.exe,WanshanMedia.exe
 RestartApplications=no
 UninstallDisplayName={#MyAppName}
@@ -40,15 +43,27 @@ SetupIconFile={#IconFile}
 SignTool={#SignToolName}
 #endif
 
+[Languages]
+Name: "chinesesimp"; MessagesFile: "{#SourcePath}\languages\ChineseSimplified.isl"
+
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Registry]
 ; Used only to identify an existing installation when a user manually runs the installer again.
 Root: HKLM64; Subkey: "Software\Yunyingxia"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue
+Root: HKLM64; Subkey: "Software\Yunyingxia"; ValueType: string; ValueName: "Version"; ValueData: "{#MyAppVersion}"; Flags: uninsdeletevalue
 
 ; 覆盖安装前清理全部旧运行时。用户数据位于 %LOCALAPPDATA%，不在安装目录。
 [InstallDelete]
+Type: files; Name: "{userdesktop}\{#MyAppName}.lnk"
+Type: files; Name: "{commondesktop}\{#MyAppName}.lnk"
+Type: files; Name: "{userdesktop}\万山自媒体.lnk"
+Type: files; Name: "{commondesktop}\万山自媒体.lnk"
+Type: files; Name: "{userdesktop}\千山AI.lnk"
+Type: files; Name: "{commondesktop}\千山AI.lnk"
+Type: files; Name: "{userdesktop}\WanshanMedia.lnk"
+Type: files; Name: "{commondesktop}\WanshanMedia.lnk"
 Type: filesandordirs; Name: "{app}\resources"
 Type: filesandordirs; Name: "{app}\locales"
 Type: files; Name: "{app}\WanshanMedia.exe"
@@ -93,12 +108,17 @@ end;
 function CloseYunyingxiaProcesses(): Boolean;
 var
   ResultCode: Integer;
+  Attempt: Integer;
 begin
-  if ProcessIsRunning('Yunyingxia.exe') then
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM "Yunyingxia.exe" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  if ProcessIsRunning('WanshanMedia.exe') then
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM "WanshanMedia.exe" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Sleep(600);
+  for Attempt := 1 to 5 do begin
+    if ProcessIsRunning('Yunyingxia.exe') then
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "Yunyingxia.exe" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ProcessIsRunning('WanshanMedia.exe') then
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM "WanshanMedia.exe" /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(500);
+    if (not ProcessIsRunning('Yunyingxia.exe')) and (not ProcessIsRunning('WanshanMedia.exe')) then
+      break;
+  end;
   Result := (not ProcessIsRunning('Yunyingxia.exe')) and (not ProcessIsRunning('WanshanMedia.exe'));
 end;
 
@@ -106,7 +126,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   if not CloseYunyingxiaProcesses() then
-    Result := '无法关闭正在运行的运营虾进程。请退出运营虾后重试。';
+    Result := '安装器已尝试强制关闭运营虾，但进程仍被系统占用。请在任务管理器结束 Yunyingxia.exe 后重试。';
 end;
 
 function ExistingInstallExe(): String;
@@ -120,6 +140,63 @@ begin
     Result := AddBackslash(InstallDir) + 'Yunyingxia.exe';
   if (Result = '') and FileExists(ExpandConstant('{autopf}\Yunyingxia\Yunyingxia.exe')) then
     Result := ExpandConstant('{autopf}\Yunyingxia\Yunyingxia.exe');
+end;
+
+function ExistingInstallVersion(): String;
+begin
+  Result := '';
+  if not RegQueryStringValue(HKLM64, 'Software\Yunyingxia', 'Version', Result) then
+    RegQueryStringValue(HKLM32, 'Software\Yunyingxia', 'Version', Result);
+end;
+
+function VersionPart(const Version: String; var Offset: Integer): Integer;
+var
+  Buffer: String;
+begin
+  Buffer := '';
+  while (Offset <= Length(Version)) and (Copy(Version, Offset, 1) <> '.') do begin
+    Buffer := Buffer + Copy(Version, Offset, 1);
+    Offset := Offset + 1;
+  end;
+  Offset := Offset + 1;
+  Result := StrToIntDef(Buffer, 0);
+end;
+
+function CompareVersionStrings(const Left, Right: String): Integer;
+var
+  Index: Integer;
+  LeftOffset: Integer;
+  RightOffset: Integer;
+  LeftPart: Integer;
+  RightPart: Integer;
+begin
+  Result := 0;
+  LeftOffset := 1;
+  RightOffset := 1;
+  for Index := 1 to 3 do begin
+    LeftPart := VersionPart(Left, LeftOffset);
+    RightPart := VersionPart(Right, RightOffset);
+    if LeftPart > RightPart then begin
+      Result := 1;
+      exit;
+    end;
+    if LeftPart < RightPart then begin
+      Result := -1;
+      exit;
+    end;
+  end;
+end;
+
+function ShouldLaunchExistingInsteadOfInstall(): Boolean;
+var
+  InstalledVersion: String;
+begin
+  Result := False;
+  InstalledVersion := ExistingInstallVersion();
+  // Old packages did not always write Version. In that case allow the installer
+  // to continue so a downloaded newer package can repair the installation.
+  if InstalledVersion = '' then exit;
+  Result := CompareVersionStrings(InstalledVersion, '{#MyAppVersion}') >= 0;
 end;
 
 function IsUpdateInvocation(): Boolean;
@@ -143,7 +220,7 @@ begin
   // Client updater always passes /UPDATE so signed in-app upgrades retain the normal Inno flow.
   if IsUpdateInvocation() then exit;
   InstalledExe := ExistingInstallExe();
-  if InstalledExe <> '' then begin
+  if (InstalledExe <> '') and ShouldLaunchExistingInsteadOfInstall() then begin
     ShellExec('', InstalledExe, '', ExtractFileDir(InstalledExe), SW_SHOWNORMAL, ewNoWait, ResultCode);
     MsgBox('已安装运营虾，现已为你打开程序。', mbInformation, MB_OK);
     Result := False;

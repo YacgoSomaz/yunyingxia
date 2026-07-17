@@ -3,15 +3,25 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import type { BrowserWindow, MessageBoxOptions } from 'electron'
+import type { BrowserWindow } from 'electron'
 import type { CommercialConfig } from './commercial-config'
-import { verifyLatestRelease, type VerifiedRelease } from './release-verifier'
+import {
+  ReleaseEventMonitor,
+  releaseEventsEndpoint,
+  type ReleaseCheckReason,
+  type ReleaseMonitorDependencies,
+} from './release-monitor'
+import { OPERATION_PRODUCT_ID, verifyLatestRelease, type VerifiedRelease } from './release-verifier'
+import { closeUpdateWindow, showUpdateWindow, updateUpdateWindow, waitForUpdateAction, type UpdatePhase } from './update-window'
 export { isAllowedUpdateUrl } from './release-verifier'
 
 interface DownloadedUpdate { version: string; filePath: string; mandatory: boolean }
+type DownloadProgress = { phase: 'downloading' | 'verifying'; percent: number; transferred: number; total: number; bytesPerSecond?: number }
 
 let registered = false
 let downloadedUpdate: DownloadedUpdate | null = null
+let runtimeMonitor: ReleaseEventMonitor | null = null
+let runtimeMonitorFactory: (() => ReleaseEventMonitor) | null = null
 
 function numericParts(version: string): number[] {
   const core = String(version).split(/[+-]/)[0]
@@ -33,23 +43,26 @@ export function requiresMandatoryUpdate(release: Pick<VerifiedRelease, 'mandator
 }
 
 export function shouldOfferRelease(release: Pick<VerifiedRelease, 'version' | 'mandatory' | 'minSupportedVersion'>, currentVersion: string): boolean {
-  return requiresMandatoryUpdate(release, currentVersion) || compareVersions(release.version, currentVersion) > 0
+  return compareVersions(release.version, currentVersion) > 0
+    || (release.minSupportedVersion !== '' && compareVersions(currentVersion, release.minSupportedVersion) < 0)
 }
 
 export function releaseEndpoint(accountServerUrl: string): string {
   const url = new URL('/api/v1/releases/latest', accountServerUrl)
-  url.searchParams.set('product_id', 'operation_shrimp')
+  url.searchParams.set('product_id', OPERATION_PRODUCT_ID)
   return url.toString()
 }
+
+export { releaseEventsEndpoint }
 
 function sha256(filePath: string): string {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
 
-type UpdateConfig = Pick<CommercialConfig, 'accountServerUrl' | 'updatePublicKey' | 'version'>
+export type UpdateConfig = Pick<CommercialConfig, 'accountServerUrl' | 'updatePublicKey' | 'version'>
 type UpdateFetcher = (input: string, init?: RequestInit) => Promise<Response>
 
-async function requestRelease(config: UpdateConfig, fetcher: UpdateFetcher = fetch): Promise<VerifiedRelease | null> {
+export async function requestSignedRelease(config: UpdateConfig, fetcher: UpdateFetcher = fetch): Promise<VerifiedRelease | null> {
   const endpoint = releaseEndpoint(config.accountServerUrl)
   const response = await fetcher(endpoint, { headers: { Accept: 'application/json' } })
   if (!response.ok) throw new Error(`更新服务请求失败: HTTP ${response.status}`)
@@ -57,12 +70,35 @@ async function requestRelease(config: UpdateConfig, fetcher: UpdateFetcher = fet
 }
 
 export async function preflightMandatoryUpdate(config: UpdateConfig, fetcher?: UpdateFetcher): Promise<VerifiedRelease | null> {
-  const release = await requestRelease(config, fetcher)
+  const release = await requestSignedRelease(config, fetcher)
   if (!release || !shouldOfferRelease(release, config.version) || !requiresMandatoryUpdate(release, config.version)) return null
   return release
 }
 
-async function downloadRelease(release: VerifiedRelease, onProgress: (payload: unknown) => void): Promise<DownloadedUpdate> {
+export function createRuntimeReleaseMonitor(
+  config: UpdateConfig,
+  checkSignedRelease: (reason: ReleaseCheckReason) => unknown,
+  dependencies?: ReleaseMonitorDependencies,
+): ReleaseEventMonitor {
+  return new ReleaseEventMonitor(
+    releaseEventsEndpoint(config.accountServerUrl),
+    checkSignedRelease,
+    dependencies,
+  )
+}
+
+function startRuntimeMonitor(): void {
+  if (runtimeMonitor || !runtimeMonitorFactory) return
+  runtimeMonitor = runtimeMonitorFactory()
+  runtimeMonitor.start()
+}
+
+export function stopRuntimeUpdateMonitoring(): void {
+  runtimeMonitor?.stop()
+  runtimeMonitor = null
+}
+
+async function downloadRelease(release: VerifiedRelease, onProgress: (payload: DownloadProgress) => void): Promise<DownloadedUpdate> {
   const response = await fetch(release.downloadUrl)
   if (!response.ok || !response.body) throw new Error(`下载安装包失败: HTTP ${response.status}`)
   const targetDir = path.join(os.tmpdir(), 'YunyingxiaUpdates')
@@ -78,7 +114,7 @@ async function downloadRelease(release: VerifiedRelease, onProgress: (payload: u
       transferred += chunk.length
       if (!output.write(chunk)) await new Promise<void>((resolve) => output.once('drain', resolve))
       const elapsed = Math.max(1, (Date.now() - startedAt) / 1000)
-      onProgress({ percent: total ? Math.min(100, (transferred / total) * 100) : 0, transferred, total, bytesPerSecond: Math.round(transferred / elapsed) })
+      onProgress({ phase: 'downloading', percent: total ? Math.min(100, (transferred / total) * 100) : 0, transferred, total, bytesPerSecond: Math.round(transferred / elapsed) })
     }
     await new Promise<void>((resolve, reject) => output.end((error?: Error | null) => error ? reject(error) : resolve()))
   } catch (error) {
@@ -86,6 +122,7 @@ async function downloadRelease(release: VerifiedRelease, onProgress: (payload: u
     await fs.promises.rm(targetPath, { force: true })
     throw error
   }
+  onProgress({ phase: 'verifying', percent: 100, transferred, total })
   if (sha256(targetPath) !== release.sha256) {
     await fs.promises.rm(targetPath, { force: true })
     throw new Error('更新包 SHA-256 校验失败')
@@ -97,28 +134,80 @@ async function downloadRelease(release: VerifiedRelease, onProgress: (payload: u
   return { version: release.version, filePath: targetPath, mandatory: release.mandatory }
 }
 
-export function registerUpdateService(getMainWindow: () => BrowserWindow | null, config: CommercialConfig): void {
-  if (registered) return
+export function registerUpdateService(getMainWindow: () => BrowserWindow | null, config: CommercialConfig): () => void {
+  const { app, ipcMain } = require('electron') as typeof import('electron')
+  if (registered) {
+    if (app.isPackaged) startRuntimeMonitor()
+    return stopRuntimeUpdateMonitoring
+  }
   registered = true
-  const { app, dialog, ipcMain } = require('electron') as typeof import('electron')
   const send = (channel: string, payload?: unknown) => {
     const window = getMainWindow()
     if (window && !window.isDestroyed()) window.webContents.send(channel, payload)
   }
-  const showDialog = (options: MessageBoxOptions) => {
-    const window = getMainWindow()
-    return window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)
-  }
   const installDownloadedUpdate = () => {
     if (!downloadedUpdate) return { ok: false, error: '没有已下载的更新安装包' }
-    spawn(downloadedUpdate.filePath, ['/UPDATE', '/CLOSEAPPLICATIONS'], { detached: true, stdio: 'ignore' }).unref()
-    setTimeout(() => app.quit(), 500)
-    return { ok: true }
+    try {
+      const installDir = path.dirname(process.execPath)
+      spawn(downloadedUpdate.filePath, ['/UPDATE', '/CLOSEAPPLICATIONS', `/DIR=${installDir}`], { detached: true, stdio: 'ignore' }).unref()
+      setTimeout(() => app.quit(), 500)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
   }
-  const checkNow = async () => {
+  let checkInFlight: Promise<unknown> | null = null
+  let lastOptionalPromptVersion = ''
+  let mandatoryUpdateActive = false
+  const updateWindowState = (release: VerifiedRelease, phase: UpdatePhase, progress: Partial<DownloadProgress> = {}, message = '') => ({
+    version: release.version,
+    notes: release.notes,
+    mandatory: requiresMandatoryUpdate(release, config.version),
+    phase,
+    installDir: path.dirname(process.execPath),
+    ...progress,
+    message,
+  })
+  const beginDownload = async (release: VerifiedRelease) => {
+    updateUpdateWindow(updateWindowState(release, 'downloading', { percent: 0, transferred: 0, total: release.sizeBytes }, '正在建立安全下载连接…'))
+    downloadedUpdate = await downloadRelease(release, (payload) => {
+      send('update:progress', payload)
+      updateUpdateWindow(updateWindowState(release, payload.phase, payload))
+    })
+    send('update:downloaded', { version: release.version, mandatory: requiresMandatoryUpdate(release, config.version) })
+    updateUpdateWindow(updateWindowState(release, 'ready', { percent: 100, transferred: release.sizeBytes, total: release.sizeBytes }))
+  }
+  const lockMainWindowForMandatoryUpdate = (release: VerifiedRelease) => {
+    const window = getMainWindow()
+    if (window && !window.isDestroyed()) window.setEnabled(false)
+    send('update:mandatory', { version: release.version })
+  }
+  const downloadMandatoryUpdate = async (release: VerifiedRelease) => {
+    if (mandatoryUpdateActive) return { ok: false, error: '必须更新正在处理，请完成更新。' }
+    mandatoryUpdateActive = true
+    lockMainWindowForMandatoryUpdate(release)
+    showUpdateWindow(getMainWindow(), updateWindowState(release, 'available'))
+    while (true) {
+      try {
+        const action = await waitForUpdateAction()
+        if (action !== 'download' && action !== 'retry') continue
+        await beginDownload(release)
+        const installAction = await waitForUpdateAction()
+        if (installAction !== 'install') continue
+        const installed = installDownloadedUpdate()
+        if (!installed.ok) throw new Error(installed.error)
+        return installed
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        send('update:error', { message, mandatory: true })
+        updateUpdateWindow(updateWindowState(release, 'error', {}, `更新失败：${message}`))
+      }
+    }
+  }
+  const performCheck = async (automatic = false) => {
     try {
       send('update:checking')
-      const release = await requestRelease(config)
+      const release = await requestSignedRelease(config)
       if (release === null) {
         send('update:not-available', { version: config.version })
         return { ok: true, available: false, version: config.version }
@@ -128,15 +217,22 @@ export function registerUpdateService(getMainWindow: () => BrowserWindow | null,
         send('update:not-available', { version: release.version })
         return { ok: true, available: false, version: release.version }
       }
+      if (mandatory) return downloadMandatoryUpdate(release)
       send('update:available', { version: release.version, mandatory })
-      const choices = mandatory ? ['下载必须更新'] : ['下载更新', '稍后']
-      const choice = await showDialog({ type: mandatory ? 'warning' : 'info', title: mandatory ? '运营虾必须更新' : '运营虾发现新版本', message: `发现新版本 ${release.version}`, detail: release.notes || (mandatory ? '当前版本低于服务端最低支持版本，请下载并安装更新。' : '新版本将从签名验证的 HTTPS 地址下载。'), buttons: choices, defaultId: 0, cancelId: mandatory ? 0 : 1 })
-      if (!mandatory && choice.response !== 0) return { ok: true, available: true, deferred: true, version: release.version }
-      downloadedUpdate = await downloadRelease(release, (payload) => send('update:progress', payload))
-      send('update:downloaded', { version: release.version, mandatory })
-      const installChoices = mandatory ? ['立即安装必须更新'] : ['立即安装', '稍后安装']
-      const install = await showDialog({ type: mandatory ? 'warning' : 'info', title: mandatory ? '运营虾必须更新' : '运营虾更新已下载', message: `版本 ${release.version} 已下载完成`, detail: '安装会自动关闭运营虾，然后启动签名验证后的安装器覆盖更新。', buttons: installChoices, defaultId: 0, cancelId: mandatory ? 0 : 1 })
-      if (mandatory || install.response === 0) return installDownloadedUpdate()
+      if (automatic && lastOptionalPromptVersion === release.version) {
+        return { ok: true, available: true, deferred: true, version: release.version }
+      }
+      lastOptionalPromptVersion = release.version
+      showUpdateWindow(getMainWindow(), updateWindowState(release, 'available'))
+      const action = await waitForUpdateAction()
+      if (action === 'later') {
+        closeUpdateWindow()
+        return { ok: true, available: true, deferred: true, version: release.version }
+      }
+      await beginDownload(release)
+      const installAction = await waitForUpdateAction()
+      if (installAction === 'install') return installDownloadedUpdate()
+      closeUpdateWindow()
       return { ok: true, available: true, version: release.version }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -144,7 +240,24 @@ export function registerUpdateService(getMainWindow: () => BrowserWindow | null,
       return { ok: false, error: message }
     }
   }
-  ipcMain.handle('update:check', checkNow)
+  const checkNow = (automatic = false) => {
+    if (checkInFlight) return checkInFlight
+    checkInFlight = performCheck(automatic).finally(() => { checkInFlight = null })
+    return checkInFlight
+  }
+  ipcMain.handle('update:check', () => checkNow(false))
   ipcMain.handle('update:install', installDownloadedUpdate)
-  if (app.isPackaged) setTimeout(() => { void checkNow() }, 5000)
+  runtimeMonitorFactory = () => createRuntimeReleaseMonitor(config, () => checkNow(true))
+  if (app.isPackaged) {
+    startRuntimeMonitor()
+    // Surface signed mandatory updates through the same progress-capable UI
+    // immediately after the main window is created. The release is still
+    // untrusted until requestSignedRelease verifies it.
+    setTimeout(() => { void checkNow(true) }, 0)
+  }
+  app.once('before-quit', stopRuntimeUpdateMonitoring)
+  return () => {
+    stopRuntimeUpdateMonitoring()
+    closeUpdateWindow()
+  }
 }

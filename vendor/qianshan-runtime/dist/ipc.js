@@ -42,6 +42,7 @@ const url_whitelist_1 = require("./utils/url-whitelist");
 const logger_1 = require("./utils/logger");
 const distribute_1 = require("./services/distribute");
 const license_1 = require("./services/license");
+const paid_action_auth_1 = require("./paid-action-auth");
 /** 探测剪映/CapCut 在本机的常见素材缓存目录 */
 function detectJianyingAudioDir() {
     const home = os.homedir();
@@ -149,6 +150,11 @@ function registerIPC(_win) {
     });
     // ─── 平台账号：扫码登录（Express 路由也能调，这里给 IPC 多一条路） ───
     electron_1.ipcMain.handle('publisher:login', async (_event, accountId) => {
+        const runtime = globalThis;
+        const allowed = await (0, paid_action_auth_1.verifyPaidOperationAccess)(runtime.__WANSHAN_VERIFY_OPERATION_ACCESS, 'POST');
+        if (!allowed) {
+            return { ok: false, code: 'MEMBERSHIP_REQUIRED', error: '会员专属功能，请开通会员后再试。' };
+        }
         return distribute_1.distribute.loginAccount(Number(accountId));
     });
 }

@@ -3,13 +3,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { INTEGRITY_PROTECTED_EXACT_PATHS, isIntegrityProtectedPath } from '../electron/integrity-policy'
 import { verifyIntegrity } from '../electron/integrity-verifier'
 
 const b64url = (value: Buffer) => value.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 
 function makeManifest(root: string): string {
   const files: Record<string, { sha256: string; size: number }> = {}
-  for (const relative of ['package.json', 'dist-electron/electron/main.js', 'vendor/qianshan-runtime/dist/server.js', 'vendor/qianshan-runtime/renderer/dist/index.html']) {
+  for (const relative of INTEGRITY_PROTECTED_EXACT_PATHS) {
     const file = path.join(root, relative)
     fs.mkdirSync(path.dirname(file), { recursive: true })
     fs.writeFileSync(file, relative)
@@ -37,19 +38,22 @@ describe('integrity verifier', () => {
     expect(verifyIntegrity(root, undefined, publicKey).ok).toBe(false)
   })
 
-  it('rejects leaked source files', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wanshan-integrity-'))
-    const publicKey = makeManifest(root)
-    fs.writeFileSync(path.join(root, 'leaked.ts'), 'source')
-    const result = verifyIntegrity(root, undefined, publicKey)
-    expect(result.issues.some((issue) => issue.includes('leaked.ts'))).toBe(true)
+  it('limits integrity protection to the explicit startup and entitlement files', () => {
+    expect(isIntegrityProtectedPath('dist-electron/electron/account-service.js')).toBe(true)
+    expect(isIntegrityProtectedPath('vendor/qianshan-runtime/dist/paid-action-auth.js')).toBe(true)
+    expect(isIntegrityProtectedPath('vendor/qianshan-runtime/renderer/dist/index.html')).toBe(false)
+    expect(isIntegrityProtectedPath('vendor/qianshan-runtime/dist/services/llm-config.js')).toBe(false)
   })
 
-  it('rejects files added after the manifest was created', () => {
+  it('allows user content and unlisted runtime files without blocking startup', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wanshan-integrity-'))
     const publicKey = makeManifest(root)
-    fs.writeFileSync(path.join(root, 'unexpected.txt'), 'tampered')
-    const result = verifyIntegrity(root, undefined, publicKey)
-    expect(result.issues).toContain('文件未纳入完整性清单: unexpected.txt')
+    const userFile = path.join(root, 'data', 'exports', 'article.txt')
+    fs.mkdirSync(path.dirname(userFile), { recursive: true })
+    fs.writeFileSync(userFile, 'user-created export')
+    const runtimeFile = path.join(root, 'vendor', 'qianshan-runtime', 'dist', 'services', 'llm-config.js')
+    fs.mkdirSync(path.dirname(runtimeFile), { recursive: true })
+    fs.writeFileSync(runtimeFile, 'user configuration bridge')
+    expect(verifyIntegrity(root, undefined, publicKey).ok).toBe(true)
   })
 })

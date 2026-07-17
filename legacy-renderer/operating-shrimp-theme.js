@@ -1156,8 +1156,67 @@
     mountAccountPanel();
   }
 
+  function showRuntimeErrorToast() {
+    const id = 'yx-runtime-error-toast';
+    let toast = document.getElementById(id);
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = id;
+      toast.setAttribute('role', 'status');
+      Object.assign(toast.style, {
+        position: 'fixed',
+        top: '16px',
+        right: '16px',
+        zIndex: '10000',
+        maxWidth: '280px',
+        padding: '10px 14px',
+        border: '1px solid #fecaca',
+        borderRadius: '8px',
+        background: '#fff7f7',
+        color: '#b42318',
+        boxShadow: '0 6px 20px rgba(16, 24, 40, .14)',
+        fontSize: '13px',
+        lineHeight: '1.4',
+        pointerEvents: 'none',
+      });
+      document.body.appendChild(toast);
+    }
+    toast.textContent = '操作错误，稍后再试';
+    clearTimeout(window.__yxRuntimeErrorTimer);
+    window.__yxRuntimeErrorTimer = window.setTimeout(() => toast?.remove(), 5000);
+  }
+
+  function installRuntimeErrorGuard() {
+    if (window.__yxRuntimeErrorGuardInstalled) return;
+    window.__yxRuntimeErrorGuardInstalled = true;
+    window.addEventListener('error', (event) => {
+      console.error('[Yunyingxia] renderer error', event.error || event.message);
+      showRuntimeErrorToast();
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error('[Yunyingxia] unhandled rejection', event.reason);
+      showRuntimeErrorToast();
+    });
+    const observer = new MutationObserver(() => {
+      const heading = Array.from(document.querySelectorAll('h2')).find((node) =>
+        node.textContent?.includes('Unexpected Application Error!'));
+      if (!heading) return;
+      // React Router's default fallback exposes the raw stack to users. Keep the
+      // diagnostic in DevTools, but remove the blocking stack view and show the
+      // same compact message as other renderer failures.
+      heading.textContent = '操作错误，稍后再试';
+      heading.parentElement?.querySelectorAll('pre').forEach((node) => node.remove());
+      heading.parentElement?.querySelectorAll('h3').forEach((node) => {
+        node.textContent = '请稍后重试。';
+      });
+      showRuntimeErrorToast();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
   function boot() {
     document.body.dataset.yxTheme = getThemeMode();
+    installRuntimeErrorGuard();
     injectStyle();
     setFavicon();
     applyBrand();

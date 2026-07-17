@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onNotAvailable: (listener: (payload: unknown) => void) => onUpdate('update:not-available', listener),
     onProgress: (listener: (payload: unknown) => void) => onUpdate('update:progress', listener),
     onDownloaded: (listener: (payload: unknown) => void) => onUpdate('update:downloaded', listener),
-    onError: (listener: (payload: unknown) => void) => onUpdate('update:error', listener)
+    onError: (listener: (payload: unknown) => void) => onUpdate('update:error', listener),
+    onUiState: (listener: (payload: unknown) => void) => onUpdate('update-ui:state', listener),
+    uiAction: (action: 'download' | 'install' | 'later' | 'retry') => ipcRenderer.invoke('update:uiAction', action),
   }
 })

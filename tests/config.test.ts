@@ -20,6 +20,16 @@ describe('desktop security configuration', () => {
     }
   })
 
+  it('does not allow local commercial configuration to switch product audiences', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'yunyingxia-product-config-'))
+    try {
+      require('node:fs').writeFileSync(join(tempRoot, 'commercial-config.json'), JSON.stringify({ productCode: 'comic_shrimp' }))
+      expect(loadCommercialConfig(tempRoot).productCode).toBe('operation_shrimp')
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('uses an isolated Electron renderer with a narrow updater bridge', () => {
     const mainPath = join(root, 'electron', 'main.ts')
     expect(existsSync(mainPath)).toBe(true)
@@ -32,6 +42,13 @@ describe('desktop security configuration', () => {
     expect(main).toContain('nodeIntegration: false')
     expect(main).toContain('qianshan-runtime')
     expect(main).toContain('registerUpdateService')
+    expect(main).not.toContain("ipcMain.handle('app:info'")
+    expect(main).toContain('function applyAppMetadata')
+    expect(main).toContain('electronApp.getVersion = () => config.version')
+    expect(main).toContain('electronApp.getName = () => config.appName')
+    expect(main).toContain('stopUpdateService?.()')
+    expect(main).toContain("mainWindow.once('closed'")
+    expect(main).toContain("app.on('before-quit'")
     expect(main).toContain('app.requestSingleInstanceLock()')
     expect(main).toContain("app.on('second-instance'")
     expect(main).toContain('existingWindow.focus()')
@@ -50,6 +67,7 @@ describe('desktop security configuration', () => {
     const releaseBuild = readFileSync(join(root, 'packaging', 'build', 'build_release.ps1'), 'utf8')
     expect(commercialConfig).toContain('accountPublicKey')
     expect(commercialConfig).toContain('updatePublicKey')
+    expect(commercialConfig).toContain("FIXED_PRODUCT_CODE = 'operation_shrimp'")
     expect(commercialConfig).toContain("accountPublicKey: 'CqLAEE2KnduTFtw1gVQIExS1qLRa-XI3TaWpbchMbKc'")
     expect(commercialConfig).not.toContain('ACCOUNT_SIGNING_PRIVATE_KEY')
     expect(commercialConfig).not.toMatch(/github\.com\/.*latest\.json/i)
@@ -63,7 +81,9 @@ describe('desktop security configuration', () => {
     expect(releaseBuild).toContain('operation-login-bg.mp4')
     expect(releaseBuild).toContain("[string]$AccountPublicKey = 'CqLAEE2KnduTFtw1gVQIExS1qLRa-XI3TaWpbchMbKc'")
     expect(releaseBuild).toContain('[string]$UpdatePublicKey = \'\'')
+    expect(releaseBuild).toContain("$ProductCode -ne 'operation_shrimp'")
     expect(releaseBuild).toContain("'--maxWorkers=1', '--minWorkers=1'")
+    expect(releaseBuild).not.toContain('release-monitor.local')
     expect(main).toContain("'x-wanshan-local-token'")
     expect(main).toContain('onBeforeSendHeaders')
     expect(main).toContain('account.ensureSession()')

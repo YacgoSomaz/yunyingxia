@@ -10,6 +10,7 @@ const shared_1 = require("@qianshan/shared");
 const routes_1 = require("./routes");
 const logger_1 = require("./utils/logger");
 const local_api_auth_1 = require("./local-api-auth");
+const paid_action_auth_1 = require("./paid-action-auth");
 const app = (0, express_1.default)();
 // ─── 中间件 ───
 app.use((0, cors_1.default)());
@@ -17,7 +18,7 @@ app.use(express_1.default.json({ limit: '50mb' }));
 app.use(express_1.default.urlencoded({ extended: true }));
 // Business routes are only callable by this Electron process. The per-run
 // token is injected in the Chromium network layer and never exposed to JS.
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
     if (req.path === '/api/health') {
         next();
         return;
@@ -28,7 +29,10 @@ app.use((req, res, next) => {
         res.status(401).json({ success: false, error: '本地服务未授权' });
         return;
     }
-    if (!(0, local_api_auth_1.isLocalApiRequestAllowed)(expected, received, process.env.WANSHAN_OPERATION_ENTITLED, req.method)) {
+    const runtime = globalThis;
+    const verifyAccess = runtime.__WANSHAN_VERIFY_OPERATION_ACCESS;
+    const allowed = await (0, paid_action_auth_1.verifyPaidOperationAccess)(verifyAccess, req.method);
+    if (!allowed) {
         res.status(403).json({ success: false, code: 'MEMBERSHIP_REQUIRED', error: '运营虾会员未开通，请先充值续费后使用该功能。' });
         return;
     }

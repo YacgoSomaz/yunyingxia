@@ -4,14 +4,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { AccountService, hasActiveAccess, type AccountState } from './account-service'
 import { registerAccountService, showAccountWindow } from './account-window'
-import { loadCommercialConfig } from './commercial-config'
+import { loadCommercialConfig, type CommercialConfig } from './commercial-config'
 import { verifyIntegrity } from './integrity-verifier'
 import { seedLegacyRuntimeAssets } from './legacy-seed'
-import { preflightMandatoryUpdate, registerUpdateService } from './update-service'
+import { registerUpdateService } from './update-service'
 
 let mainWindow: BrowserWindow | null = null
 let accountRefreshTimer: NodeJS.Timeout | null = null
 let accountLoginPending = false
+let accountBootInProgress = false
+let activeCommercialConfig: CommercialConfig | null = null
+let stopUpdateService: (() => void) | null = null
 const localApiAccessToken = crypto.randomBytes(32).toString('base64url')
 const LOCAL_API_TOKEN_HEADER = 'x-wanshan-local-token'
 const LOCAL_API_URL_FILTER = 'http://127.0.0.1:19832/api/*'
@@ -52,6 +55,16 @@ function appIconPath(): string | undefined {
   return candidates.find((candidate) => fs.existsSync(candidate))
 }
 
+function applyAppMetadata(config: CommercialConfig): void {
+  app.setName(config.appName)
+  const electronApp = app as typeof app & {
+    getVersion(): string
+    getName(): string
+  }
+  electronApp.getVersion = () => config.version
+  electronApp.getName = () => config.appName
+}
+
 async function startLegacyRuntime(): Promise<void> {
   process.env.WANSHAN_RUNTIME = '1'
   process.env.WANSHAN_LOCAL_API_TOKEN = localApiAccessToken
@@ -86,8 +99,19 @@ function installLocalApiRequestHeader(window: BrowserWindow): void {
   )
 }
 
-function updateOperationEntitlement(state: AccountState): void {
+function updateOperationEntitlement(state: AccountState | null): void {
   process.env.WANSHAN_OPERATION_ENTITLED = hasActiveAccess(state) ? '1' : '0'
+}
+
+function installOperationEntitlementGate(account: AccountService): void {
+  const runtime = globalThis as typeof globalThis & {
+    __WANSHAN_VERIFY_OPERATION_ACCESS?: () => Promise<boolean>
+  }
+  runtime.__WANSHAN_VERIFY_OPERATION_ACCESS = async () => {
+    const result = await account.verifyOperationEntitlement()
+    updateOperationEntitlement(result.state)
+    return result.entitled
+  }
 }
 
 function createWindow(): void {
@@ -110,16 +134,26 @@ function createWindow(): void {
 
   installLocalApiRequestHeader(mainWindow)
   mainWindow.webContents.on('devtools-opened', () => mainWindow?.webContents.closeDevTools())
+  mainWindow.once('closed', () => {
+    mainWindow = null
+    stopUpdateService?.()
+    stopUpdateService = null
+  })
 
   void mainWindow.loadFile(path.join(legacyRuntimeRoot(), 'renderer', 'dist', 'index.html'))
+  if (activeCommercialConfig) {
+    stopUpdateService = registerUpdateService(() => mainWindow, activeCommercialConfig)
+  }
 }
 
 async function boot(): Promise<void> {
+  accountBootInProgress = true
   const root = appRoot()
   let commercialConfig
   try {
     commercialConfig = loadCommercialConfig(root)
   } catch (error) {
+    accountBootInProgress = false
     dialog.showErrorBox('运营虾启动失败', error instanceof Error ? error.message : '商业配置无效')
     app.quit()
     return
@@ -128,35 +162,16 @@ async function boot(): Promise<void> {
   if (app.isPackaged) {
     const integrity = verifyIntegrity(root, undefined, commercialConfig.integrityPublicKey)
     if (!integrity.ok) {
+      accountBootInProgress = false
       dialog.showErrorBox('运营虾完整性校验失败', integrity.issues.slice(0, 12).join('\n'))
       app.quit()
       return
     }
   }
 
-  // Only a current, verified update_release can block startup. Connectivity
-  // errors and optional updates must never prevent the user from opening the app.
-  try {
-    const mandatoryRelease = await preflightMandatoryUpdate(commercialConfig)
-    if (mandatoryRelease) {
-      await dialog.showMessageBox({
-        type: 'warning',
-        title: '运营虾必须更新',
-        message: `当前版本已停止支持，请更新至 ${mandatoryRelease.version}`,
-        detail: mandatoryRelease.notes || '此版本低于服务端最低支持版本，安装新版后再打开运营虾。',
-        buttons: ['退出'],
-        defaultId: 0,
-        cancelId: 0,
-      })
-      app.quit()
-      return
-    }
-  } catch (error) {
-    console.warn('[Yunyingxia] Update preflight unavailable:', error instanceof Error ? error.message : String(error))
-  }
-
   const account = new AccountService(commercialConfig)
   registerAccountService(account)
+  installOperationEntitlementGate(account)
   let state = await account.ensureSession().catch(() => null)
   if (!state) {
     let loggedIn = false
@@ -167,11 +182,13 @@ async function boot(): Promise<void> {
       accountLoginPending = false
     }
     if (!loggedIn) {
+      accountBootInProgress = false
       app.quit()
       return
     }
     state = await account.ensureSession().catch(() => null)
     if (!state) {
+      accountBootInProgress = false
       dialog.showErrorBox('运营虾登录失败', '未能读取当前账号状态，请重新登录。')
       app.quit()
       return
@@ -179,16 +196,14 @@ async function boot(): Promise<void> {
   }
   updateOperationEntitlement(state)
   accountRefreshTimer = account.startBackgroundRefresh((error) => {
-    if (accountRefreshTimer) {
-      clearInterval(accountRefreshTimer)
-      accountRefreshTimer = null
-    }
-    dialog.showErrorBox('运营虾登录状态已失效', error.message || '请重新登录。')
-    app.quit()
+    updateOperationEntitlement(null)
+    console.warn('[Yunyingxia] Account entitlement revoked:', error.message || '账号状态已失效')
   }, updateOperationEntitlement)
 
+  activeCommercialConfig = commercialConfig
+  applyAppMetadata(commercialConfig)
   createWindow()
-  registerUpdateService(() => mainWindow, commercialConfig)
+  accountBootInProgress = false
   await startLegacyRuntime()
 }
 
@@ -213,6 +228,13 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on('window-all-closed', () => {
-  if (accountLoginPending) return
+  if (accountLoginPending || accountBootInProgress) return
+  stopUpdateService?.()
+  stopUpdateService = null
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  stopUpdateService?.()
+  stopUpdateService = null
 })

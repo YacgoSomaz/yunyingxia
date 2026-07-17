@@ -45,22 +45,36 @@ describe("bundled media binaries", () => {
     );
 
     expect(buildScript).toContain("resources/app.asar.unpacked");
+    expect(buildScript).toContain("integrity-policy.js");
+    expect(buildScript).toContain("$packagedPackageJson.version = $Version");
     expect(buildScript).toContain("sharp-win32-x64.node");
     expect(installerScript).toContain('Name: "{app}\\resources"');
     expect(installerScript).toContain("CloseApplicationsFilter=Yunyingxia.exe,WanshanMedia.exe");
-    expect(installerScript).toContain('CloseApplications=yes');
-    expect(installerScript).toContain('退出运营虾后重试');
+    expect(installerScript).toContain('CloseApplications=no');
+    expect(installerScript).toContain('UsePreviousAppDir=yes');
+    expect(installerScript).toContain('AlwaysShowDirOnReadyPage=yes');
+    expect(installerScript).toContain('任务管理器结束 Yunyingxia.exe 后重试');
     expect(installerScript).toContain('tasklist /FI');
+    expect(installerScript).toContain('/F /IM "Yunyingxia.exe" /T');
+    expect(installerScript).toContain('/F /IM "WanshanMedia.exe" /T');
     expect(installerScript).toContain('SignTool');
     expect(installerScript).toContain('AppId={{B5D3D2EF-32D0-4E9B-A9CB-6CFEF7F0D7D6}');
     expect(installerScript).toContain('ValueName: "InstallDir"');
+    expect(installerScript).toContain('ValueName: "Version"');
     expect(installerScript).toContain('function InitializeSetup(): Boolean;');
+    expect(installerScript).toContain('function ShouldLaunchExistingInsteadOfInstall(): Boolean;');
+    expect(installerScript).toContain('CompareVersionStrings(InstalledVersion, \'{#MyAppVersion}\') >= 0');
     expect(installerScript).toContain('function IsUpdateInvocation(): Boolean;');
     expect(installerScript).toContain("ParamStr(Index), '/UPDATE'");
     expect(installerScript).toContain('已安装运营虾，现已为你打开程序。');
+    expect(installerScript).toContain('Name: "{userdesktop}\\{#MyAppName}.lnk"');
+    expect(installerScript).toContain('Name: "{commondesktop}\\{#MyAppName}.lnk"');
+    expect(installerScript).toContain('Name: "chinesesimp"; MessagesFile: "{#SourcePath}\\languages\\ChineseSimplified.isl"');
+    expect(existsSync(join(projectRoot, "packaging", "installer", "languages", "ChineseSimplified.isl"))).toBe(true);
     expect(installerScript).toContain('{autopf}\\Yunyingxia\\Yunyingxia.exe');
     expect(installerScript).toContain('Name: "{app}\\resources"');
     expect(installerScript).toContain('RemoveUserDataOnUninstall');
+    expect(existsSync(join(projectRoot, "electron", "integrity-policy.ts"))).toBe(true);
   });
 
   it("keeps installers in an immutable product/version directory and reserves real signing hooks", () => {
@@ -122,5 +136,18 @@ describe("bundled media binaries", () => {
     expect(buildScript).toContain("迁移第三方依赖中指向 src/ 的运行入口");
     expect(buildScript).toContain("$packageJson.$field");
     expect(buildScript).toContain("./dist/");
+  });
+
+  it("packages the compiled runtime release monitor without development-only files", () => {
+    const buildScript = readFileSync(
+      join(projectRoot, "packaging", "build", "build_release.ps1"),
+      "utf8",
+    );
+    const monitorSource = readFileSync(join(projectRoot, "electron", "release-monitor.ts"), "utf8");
+
+    expect(buildScript).toContain("Copy-Item (Join-Path $ProjectRoot 'dist-electron')");
+    expect(monitorSource).toContain("RELEASE_POLL_INTERVAL_MS = 60_000");
+    expect(monitorSource).toContain("releaseEventsEndpoint");
+    expect(monitorSource).not.toContain("process.env.UPDATE_");
   });
 });

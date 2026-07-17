@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import crypto from 'node:crypto'
-import { ACCOUNT_REFRESH_INTERVAL_SECONDS, OPERATION_ENTITLEMENT, OPERATION_PRODUCT_ID, accountProductsFromResponse, hasActiveAccess, isValidPhone, normalizeAccountProducts, normalizeAccountUser, normalizePhone, verifyAccountEnvelope } from '../electron/account-service'
+import { AccountService, ACCOUNT_REFRESH_INTERVAL_SECONDS, OPERATION_ENTITLEMENT, OPERATION_PRODUCT_ID, accountProductsFromResponse, hasActiveAccess, isValidPhone, normalizeAccountProducts, normalizeAccountUser, normalizePhone, verifyAccountEnvelope } from '../electron/account-service'
+
+vi.mock('electron', () => ({
+  app: { getPath: () => `${process.env.TEMP || process.cwd()}\\yunyingxia-account-service-test` },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (value: string) => Buffer.from(value, 'utf8'),
+    decryptString: (value: Buffer) => value.toString('utf8'),
+  },
+}))
+
+afterEach(() => vi.unstubAllGlobals())
 
 function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
@@ -124,6 +135,7 @@ describe('account authorization', () => {
       user: normalizeAccountUser({ id: 1, phone: '13812345678', energy_balance: 0 }),
       products,
       productsAuthoritative: true,
+      signedUntil: Math.floor(Date.parse('2026-07-14T00:01:00.000Z') / 1000),
       lastCheckedAt: 0,
     }, Date.parse('2026-07-14T00:00:00.000Z'))).toBe(true)
   })
@@ -213,6 +225,7 @@ describe('account authorization', () => {
       user: trusted.user,
       products: trusted.products,
       productsAuthoritative: true,
+      signedUntil: trusted.signedUntil,
       lastCheckedAt: 0,
     }, Date.parse(issuedAt))).toBe(true)
   })
@@ -231,7 +244,7 @@ describe('account authorization', () => {
       products: [],
     })
     const trusted = verifyAccountEnvelope(envelope, publicKey, Date.parse(issuedAt))
-    expect(hasActiveAccess({ cookie: '', user: trusted.user, products: trusted.products, productsAuthoritative: true, lastCheckedAt: 0 }, Date.parse(issuedAt))).toBe(false)
+    expect(hasActiveAccess({ cookie: '', user: trusted.user, products: trusted.products, productsAuthoritative: true, signedUntil: trusted.signedUntil, lastCheckedAt: 0 }, Date.parse(issuedAt))).toBe(false)
   })
 
   it('rejects captured account envelopes when products are tampered with', () => {
@@ -311,19 +324,21 @@ describe('account authorization', () => {
     expect(() => verifyAccountEnvelope(envelope, publicKey, Date.parse(issuedAt) + 15 * 60_000)).toThrow('账号授权包已过期')
   })
 
-  it('refreshes account authorization every ten minutes and no longer boots through card keys', () => {
-    expect(ACCOUNT_REFRESH_INTERVAL_SECONDS).toBe(10 * 60)
+  it('refreshes account authorization every 60 seconds and no longer boots through card keys', () => {
+    expect(ACCOUNT_REFRESH_INTERVAL_SECONDS).toBe(60)
     const main = readFileSync('electron/main.ts', 'utf8')
     const preload = readFileSync('electron/preload.ts', 'utf8')
     expect(main).toContain('account.startBackgroundRefresh')
     expect(main).toContain('showAccountWindow')
     expect(main).not.toContain('showLicenseWindow')
     expect(main).not.toContain("dialog.showErrorBox('运营虾登录失败', '请使用手机号登录后再启动运营虾。')")
-    expect(main).toContain('if (!loggedIn) {\n      app.quit()')
+    expect(main).toContain('if (!loggedIn) {\n      accountBootInProgress = false\n      app.quit()')
     expect(main).toContain('let accountLoginPending = false')
+    expect(main).toContain('let accountBootInProgress = false')
+    expect(main).toContain('accountBootInProgress = true')
     expect(main).toContain('accountLoginPending = true')
     expect(main).toContain('accountLoginPending = false')
-    expect(main).toContain('if (accountLoginPending) return')
+    expect(main).toContain('if (accountLoginPending || accountBootInProgress) return')
     expect(preload).toContain('account:sendCode')
     expect(preload).toContain('account:openRechargePortal')
     expect(preload).not.toContain('account:createWechatOrder')
@@ -344,6 +359,103 @@ describe('account authorization', () => {
     expect(service).toContain("'x-product-code': OPERATION_PRODUCT_ID")
     expect(service).not.toContain("'x-anyq-product': OPERATION_PRODUCT_ID")
     expect(service).toContain("if (!publicKey) throw new Error('账号验签公钥未配置')")
+  })
+
+  it('clears a signed local entitlement when the account server disables the member', async () => {
+    const now = Date.now()
+    const issuedAt = Math.floor(now / 1000)
+    const { publicKey, envelope } = signedEnvelope({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 60,
+      user: { id: 1, phone: '13812345678' },
+      products: [{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }],
+    })
+    const service = new AccountService({
+      commercial: true,
+      licenseServerUrl: 'https://license.runmo.art',
+      licensePublicKey: '',
+      accountServerUrl: 'https://anyq.site',
+      accountPublicKey: publicKey,
+      updatePublicKey: '',
+      integrityPublicKey: '',
+      offlineGraceHours: 0,
+      productCode: OPERATION_PRODUCT_ID,
+      appName: '运营虾',
+      version: '0.1.15',
+    })
+    service.clearCache()
+    ;(service as unknown as { writeCache(state: unknown): void }).writeCache({
+      cookie: 'session=test',
+      user: normalizeAccountUser({ id: 1, phone: '13812345678' }, now),
+      products: normalizeAccountProducts([{
+        product_id: OPERATION_PRODUCT_ID,
+        name: '运营虾',
+        status: 'active',
+        expires_at: new Date(now + 86_400_000).toISOString(),
+        entitlements: [OPERATION_ENTITLEMENT],
+      }]),
+      productsAuthoritative: true,
+      accountLicense: envelope,
+      signedUntil: issuedAt + 60,
+      lastCheckedAt: Math.floor(now / 1000),
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: '会员已停用' }),
+      headers: { get: () => null },
+    })))
+
+    const result = await service.verifyOperationEntitlement()
+    expect(result).toEqual({ state: null, entitled: false, source: 'denied' })
+    expect(service.currentState()).toBeNull()
+    service.clearCache()
+  })
+
+  it('keeps a signed entitlement only until signed_until during a network failure', async () => {
+    const now = Date.now()
+    const issuedAt = Math.floor(now / 1000)
+    const { publicKey, envelope } = signedEnvelope({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 60,
+      user: { id: 1, phone: '13812345678' },
+      products: [{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }],
+    })
+    const service = new AccountService({
+      commercial: true,
+      licenseServerUrl: 'https://license.runmo.art',
+      licensePublicKey: '',
+      accountServerUrl: 'https://anyq.site',
+      accountPublicKey: publicKey,
+      updatePublicKey: '',
+      integrityPublicKey: '',
+      offlineGraceHours: 0,
+      productCode: OPERATION_PRODUCT_ID,
+      appName: '运营虾',
+      version: '0.1.15',
+    })
+    service.clearCache()
+    ;(service as unknown as { writeCache(state: unknown): void }).writeCache({
+      cookie: 'session=test',
+      user: normalizeAccountUser({ id: 1, phone: '13812345678' }, now),
+      products: normalizeAccountProducts([{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }]),
+      productsAuthoritative: true,
+      accountLicense: envelope,
+      signedUntil: issuedAt + 60,
+      lastCheckedAt: Math.floor(now / 1000),
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network unavailable') }))
+
+    const result = await service.verifyOperationEntitlement()
+    expect(result.source).toBe('cached-network')
+    expect(result.entitled).toBe(true)
+    service.clearCache()
   })
 
   it('rejects missing algorithms, duplicate JSON keys, and invalid signed time ranges', () => {

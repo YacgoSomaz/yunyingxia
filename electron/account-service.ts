@@ -4,7 +4,8 @@ import path from 'node:path'
 import type { CommercialConfig } from './commercial-config'
 import { verifyEd25519Signature } from './license-crypto'
 
-export const ACCOUNT_REFRESH_INTERVAL_SECONDS = 10 * 60
+export const ACCOUNT_REFRESH_INTERVAL_SECONDS = 60
+const ACCOUNT_LICENSE_MAX_LIFETIME_SECONDS = 10 * 60
 export const OPERATION_PRODUCT_ID = 'operation_shrimp'
 export const OPERATION_ENTITLEMENT = 'operation_course'
 export const ACCOUNT_LICENSE_SCHEMA = 'anyq.account-license.v1'
@@ -45,6 +46,10 @@ export interface AccountState {
   user: AccountUser
   products: AccountProduct[]
   productsAuthoritative?: boolean
+  accountLicense?: AccountLicense
+  // This value comes from the verified account_license payload. It bounds the
+  // short offline window when the account server is temporarily unreachable.
+  signedUntil?: number
   expiresAt?: string
   lastCheckedAt: number
 }
@@ -61,6 +66,13 @@ export interface TrustedAccountData {
   user: AccountUser
   products: AccountProduct[]
   signedUntil?: number
+  accountLicense: AccountLicense
+}
+
+export interface OperationEntitlementResult {
+  state: AccountState | null
+  entitled: boolean
+  source: 'remote' | 'cached-network' | 'denied'
 }
 
 export interface AccountPlan {
@@ -121,7 +133,11 @@ function isAccountState(input: AccountUser | AccountState): input is AccountStat
 export function hasActiveAccess(input: AccountUser | AccountState | null | undefined, now = Date.now()): boolean {
   if (!input) return false
   if (isAccountState(input)) {
-    return input.productsAuthoritative === true && hasOperationProduct(input.products, now)
+    const nowSeconds = Math.floor(now / 1000)
+    return input.productsAuthoritative === true
+      && Number.isSafeInteger(input.signedUntil)
+      && Number(input.signedUntil) > nowSeconds
+      && hasOperationProduct(input.products, now)
   }
   // Raw response users and root products are display-only. A signed
   // account_license payload is required before a client may unlock features.
@@ -305,7 +321,7 @@ export function verifyAccountEnvelope(
   if (!Number.isSafeInteger(issuedAt) || !Number.isSafeInteger(signedUntil)) throw new Error('账号授权包时间字段无效')
   if (issuedAt > nowSeconds + ACCOUNT_LICENSE_CLOCK_SKEW_SECONDS) throw new Error('账号授权包时间异常')
   if (signedUntil <= nowSeconds) throw new Error('账号授权包已过期，请重新登录')
-  if (signedUntil <= issuedAt || signedUntil - issuedAt > ACCOUNT_REFRESH_INTERVAL_SECONDS) throw new Error('账号授权包时间范围无效')
+  if (signedUntil <= issuedAt || signedUntil - issuedAt > ACCOUNT_LICENSE_MAX_LIFETIME_SECONDS) throw new Error('账号授权包时间范围无效')
 
   const user = normalizeAccountUser(payload.user, now)
   const productSource = objectField(payload, 'products') ?? objectField(payload.user, 'products')
@@ -313,6 +329,13 @@ export function verifyAccountEnvelope(
     user,
     products: normalizeAccountProducts(productSource, undefined, now),
     signedUntil,
+    accountLicense: {
+      schema: envelope.schema,
+      alg: envelope.alg,
+      key_id: envelope.key_id,
+      payload: String(envelope.payload || ''),
+      signature: String(envelope.signature || ''),
+    },
   }
 }
 
@@ -370,13 +393,16 @@ export class AccountService {
       const wrapper = JSON.parse(fs.readFileSync(this.cachePath, 'utf8')) as { encrypted?: string }
       if (!wrapper.encrypted || !safeStorage.isEncryptionAvailable()) return null
       const state = JSON.parse(safeStorage.decryptString(Buffer.from(wrapper.encrypted, 'base64'))) as AccountState
-      const user = normalizeAccountUser(state.user)
-      const productsAuthoritative = state.productsAuthoritative === true
+      const publicKey = String(this.config.accountPublicKey || '').trim()
+      if (!publicKey || !state.accountLicense) return null
+      const trusted = verifyAccountEnvelope(state.accountLicense, publicKey)
       return {
         ...state,
-        user,
-        products: normalizeAccountProducts(state.products, productsAuthoritative ? undefined : undefined),
-        productsAuthoritative,
+        user: trusted.user,
+        products: trusted.products,
+        productsAuthoritative: true,
+        signedUntil: trusted.signedUntil,
+        accountLicense: trusted.accountLicense,
       }
     } catch {
       return null
@@ -418,6 +444,8 @@ export class AccountService {
       user: trusted.user,
       products: trusted.products,
       productsAuthoritative: true,
+      accountLicense: trusted.accountLicense,
+      signedUntil: trusted.signedUntil,
       expiresAt: String(data.expiresAt || (trusted.signedUntil ? new Date(trusted.signedUntil * 1000).toISOString() : '')),
       lastCheckedAt: Math.floor(Date.now() / 1000),
     }
@@ -439,6 +467,8 @@ export class AccountService {
         user: trusted.user,
         products: trusted.products,
         productsAuthoritative: true,
+        accountLicense: trusted.accountLicense,
+        signedUntil: trusted.signedUntil,
         lastCheckedAt: Math.floor(Date.now() / 1000),
       }
       this.writeCache(refreshed)
@@ -462,6 +492,30 @@ export class AccountService {
   async ensureEntitled(): Promise<AccountState | null> {
     const state = await this.ensureSession()
     return hasActiveAccess(state) ? state : null
+  }
+
+  // Paid local API actions call this instead of trusting the cached state. A
+  // short, still-signed cache is only retained for a transient network outage.
+  async verifyOperationEntitlement(): Promise<OperationEntitlementResult> {
+    const cached = this.readCache()
+    if (!cached?.cookie) return { state: null, entitled: false, source: 'denied' }
+    try {
+      const refreshed = await this.refresh(cached)
+      return {
+        state: refreshed,
+        entitled: hasActiveAccess(refreshed),
+        source: refreshed ? 'remote' : 'denied',
+      }
+    } catch (error) {
+      if ((error instanceof AccountHttpError && error.authoritative) || isAccountTrustError(error)) {
+        return { state: null, entitled: false, source: 'denied' }
+      }
+      return {
+        state: cached,
+        entitled: hasActiveAccess(cached),
+        source: 'cached-network',
+      }
+    }
   }
 
   async logout(): Promise<void> {
@@ -506,7 +560,7 @@ export class AccountService {
 
   startBackgroundRefresh(
     onInvalid: (error: Error) => void,
-    onState?: (state: AccountState) => void,
+    onState?: (state: AccountState | null) => void,
   ): NodeJS.Timeout {
     const run = async () => {
       const cached = this.readCache()
@@ -523,7 +577,13 @@ export class AccountService {
         }
         onState?.(refreshed)
       } catch (error) {
-        onInvalid(error instanceof Error ? error : new Error('账号状态校验失败，请重新登录。'))
+        if ((error instanceof AccountHttpError && error.authoritative) || isAccountTrustError(error)) {
+          onInvalid(error instanceof Error ? error : new Error('账号状态校验失败，请重新登录。'))
+          return
+        }
+        // Do not extend offline access indefinitely. hasActiveAccess checks the
+        // signed_until value, so this only preserves a still-valid signed packet.
+        onState?.(cached)
       }
     }
     const timer = setInterval(() => { void run() }, ACCOUNT_REFRESH_INTERVAL_SECONDS * 1000)

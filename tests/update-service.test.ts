@@ -81,6 +81,21 @@ describe('signed product update client', () => {
   })
 
   it.each([
+    ['wrong audience', { aud: 'comic_shrimp', product_id: 'comic_shrimp' }],
+    ['expired signed_until', { signed_until: Math.floor(Date.now() / 1000) - 1 }],
+  ])('rejects a validly signed release with %s', (_label, overrides) => {
+    const { response, publicKey } = signedResponse(overrides)
+    expect(() => verifyLatestRelease(response, publicKey)).toThrow()
+  })
+
+  it('rejects a release envelope with the wrong update key id', () => {
+    const { response, publicKey } = signedResponse()
+    const envelope = response.update_release as Record<string, unknown>
+    envelope.key_id = 'account-v1'
+    expect(() => verifyLatestRelease(response, publicKey)).toThrow('协议不匹配')
+  })
+
+  it.each([
     ['HTTP installer', { installer_url: 'http://download.anyq.site/update.exe' }],
     ['untrusted download host', { installer_url: 'https://download.attacker.example/update.exe' }],
     ['installer query string', { installer_url: 'https://download.anyq.site/update.exe?token=leak' }],
@@ -103,7 +118,8 @@ describe('signed product update client', () => {
     expect(requiresMandatoryUpdate({ mandatory: true, minSupportedVersion: '0.1.12' }, '0.1.12')).toBe(true)
     expect(requiresMandatoryUpdate({ mandatory: false, minSupportedVersion: '0.1.13' }, '0.1.12')).toBe(true)
     expect(requiresMandatoryUpdate({ mandatory: false, minSupportedVersion: '0.1.12' }, '0.1.12')).toBe(false)
-    expect(shouldOfferRelease({ version: '0.1.12', mandatory: true, minSupportedVersion: '0.1.12' }, '0.1.12')).toBe(true)
+    expect(shouldOfferRelease({ version: '0.1.13', mandatory: true, minSupportedVersion: '0.1.12' }, '0.1.12')).toBe(true)
+    expect(shouldOfferRelease({ version: '0.1.12', mandatory: true, minSupportedVersion: '0.1.12' }, '0.1.12')).toBe(false)
   })
 
   it('only permits signed HTTPS installer addresses', () => {
@@ -125,16 +141,30 @@ describe('signed product update client', () => {
     )).resolves.toBeNull()
   })
 
-  it('prompts normally unless the signed mandatory flag or signed minimum version requires update', () => {
+  it('uses a visible stateful update window for optional and mandatory releases', () => {
     const source = readFileSync(join(process.cwd(), 'electron', 'update-service.ts'), 'utf8')
+    const windowSource = readFileSync(join(process.cwd(), 'electron', 'update-window.ts'), 'utf8')
     expect(source).toContain('const mandatory = requiresMandatoryUpdate(release, config.version)')
+    expect(source).toContain('if (mandatory) return downloadMandatoryUpdate(release)')
+    expect(source).toContain('window.setEnabled(false)')
     expect(source).toContain('if (!shouldOfferRelease(release, config.version))')
-    expect(source).toContain("['下载更新', '稍后']")
-    expect(source).toContain("['下载必须更新']")
-    expect(source).toContain("['立即安装', '稍后安装']")
-    expect(source).toContain("['立即安装必须更新']")
-    expect(source).toContain("spawn(downloadedUpdate.filePath, ['/UPDATE', '/CLOSEAPPLICATIONS']")
+    expect(source).toContain('showUpdateWindow(getMainWindow(), updateWindowState(release, \'available\'))')
+    expect(source).toContain("updateUpdateWindow(updateWindowState(release, 'ready'")
+    expect(source).toContain("updateUpdateWindow(updateWindowState(release, 'error'")
+    expect(source).toContain('const installDir = path.dirname(process.execPath)')
+    expect(source).toContain("spawn(downloadedUpdate.filePath, ['/UPDATE', '/CLOSEAPPLICATIONS', `/DIR=${installDir}`]")
+    expect(source).toContain('installDir: path.dirname(process.execPath)')
     expect(source).toContain('release.sizeBytes')
+    expect(windowSource).toContain('普通更新')
+    expect(windowSource).toContain('必须更新')
+    expect(windowSource).toContain('下载更新')
+    expect(windowSource).toContain('立即安装')
+    expect(windowSource).toContain('重试下载')
+    expect(windowSource).toContain('安装位置：')
+    expect(windowSource).toContain('覆盖上方安装位置')
+    expect(windowSource).toContain("value === 'later'")
+    expect(windowSource).toContain("latestState?.mandatory && !closeAllowed")
+    expect(windowSource).toContain("'update-ui:state'")
   })
 
   it('contains no legacy unsigned manifest or update-feed fallback', () => {

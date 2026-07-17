@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+export const FIXED_PRODUCT_CODE = 'operation_shrimp'
+
 export interface CommercialConfig {
   commercial: boolean
   licenseServerUrl: string
@@ -24,7 +26,7 @@ const DEFAULT_CONFIG: CommercialConfig = {
   updatePublicKey: '',
   integrityPublicKey: '',
   offlineGraceHours: 72,
-  productCode: 'operation_shrimp',
+  productCode: FIXED_PRODUCT_CODE,
   appName: '运营虾',
   version: '0.0.0-dev',
 }
@@ -59,7 +61,9 @@ export function loadCommercialConfig(appRoot: string): CommercialConfig {
     updatePublicKey: String(raw.updatePublicKey || DEFAULT_CONFIG.updatePublicKey).trim(),
     integrityPublicKey: String(raw.integrityPublicKey || ''),
     offlineGraceHours: Math.max(0, Math.min(24 * 30, Number(raw.offlineGraceHours) || DEFAULT_CONFIG.offlineGraceHours)),
-    productCode: String(raw.productCode || DEFAULT_CONFIG.productCode).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 64),
+    // This client is permanently bound to operation_shrimp. A local config file
+    // must not turn it into another product client.
+    productCode: FIXED_PRODUCT_CODE,
     appName: String(raw.appName || DEFAULT_CONFIG.appName),
     version: String(raw.version || DEFAULT_CONFIG.version),
   }
