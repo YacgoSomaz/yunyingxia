@@ -5,19 +5,17 @@ import { describe, expect, it } from 'vitest'
 import { loadCommercialConfig } from '../electron/commercial-config'
 
 const root = process.cwd()
+const packageVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 
 describe('desktop security configuration', () => {
   it('requires a signed account login by default when no local config file exists', () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), 'yunyingxia-config-'))
-    try {
-      const config = loadCommercialConfig(tempRoot)
-      expect(config.commercial).toBe(true)
-      expect(config.accountServerUrl).toBe('https://anyq.site')
-      expect(config.accountPublicKey).not.toBe('')
-      expect(config.updatePublicKey).toBe('')
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true })
-    }
+    const config = loadCommercialConfig(root)
+    expect(config.commercial).toBe(true)
+    expect(config.accountServerUrl).toBe('https://anyq.site')
+    expect(config.accountPublicKey).not.toBe('')
+    expect(config.updatePublicKey).toBe('')
+    expect(config.version).toBe(packageVersion)
+    expect(config.version).not.toMatch(/^0\.0\.0/)
   })
 
   it('does not allow local commercial configuration to switch product audiences', () => {

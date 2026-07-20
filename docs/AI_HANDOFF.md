@@ -78,6 +78,8 @@ npm run build
 npm start
 ```
 
+本地开发直接 `npm start` 时也会加载真实远端账号校验。没有 `commercial-config.json` 的开发目录会从根目录 `package.json` 读取版本号；当前应为 `0.1.24`，不要再回退到 `0.0.0-dev`，否则更新器会把本地调试进程当成过旧客户端。
+
 打商业包：
 
 ```powershell
@@ -100,6 +102,7 @@ pwsh -File packaging\build\build_release.ps1 `
 - `release/operation-shrimp/<version>/YunyingxiaSetup_<version>.exe` 生成，exe 使用 Git LFS
 - asar 内 `commercial-config.json` 的 `accountServerUrl` 是 `https://anyq.site`
 - asar 内 `commercial-config.json` 的 `version` 和 `package.json.version` 与安装包版本一致
+- 开发态没有 `commercial-config.json` 时，`loadCommercialConfig(process.cwd()).version` 必须等于根目录 `package.json.version`
 - asar 内 `commercial-config.json` 的 `productCode` 固定为 `operation_shrimp`
 - `main.js` 不得重复注册 `ipcMain.handle('app:info')`；版本通过商业配置覆盖 `app.getVersion()` 给原千山运行时读取
 - asar 内 `commercial-config.json` 包含仅用于验签的 `updatePublicKey`，不包含更新私钥

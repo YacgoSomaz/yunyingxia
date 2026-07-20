@@ -28,7 +28,7 @@ const DEFAULT_CONFIG: CommercialConfig = {
   offlineGraceHours: 72,
   productCode: FIXED_PRODUCT_CODE,
   appName: '运营虾',
-  version: '0.0.0-dev',
+  version: '0.1.24',
 }
 
 function assertHttps(url: string): string {
@@ -45,9 +45,21 @@ function normalizeHttpsBaseUrl(value: string): string {
   return parsed.toString().replace(/\/$/, '')
 }
 
+function readPackageVersion(appRoot: string): string {
+  try {
+    const packageJsonPath = path.join(appRoot, 'package.json')
+    const raw = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as { version?: unknown }
+    const version = String(raw.version || '').trim()
+    return version || DEFAULT_CONFIG.version
+  } catch {
+    return DEFAULT_CONFIG.version
+  }
+}
+
 export function loadCommercialConfig(appRoot: string): CommercialConfig {
   const configPath = path.join(appRoot, 'commercial-config.json')
-  if (!fs.existsSync(configPath)) return { ...DEFAULT_CONFIG }
+  const packageVersion = readPackageVersion(appRoot)
+  if (!fs.existsSync(configPath)) return { ...DEFAULT_CONFIG, version: packageVersion }
 
   const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Partial<CommercialConfig>
   const config: CommercialConfig = {
@@ -65,7 +77,7 @@ export function loadCommercialConfig(appRoot: string): CommercialConfig {
     // must not turn it into another product client.
     productCode: FIXED_PRODUCT_CODE,
     appName: String(raw.appName || DEFAULT_CONFIG.appName),
-    version: String(raw.version || DEFAULT_CONFIG.version),
+    version: String(raw.version || packageVersion),
   }
 
   return config

@@ -78,6 +78,8 @@ npm start
 npm test
 ```
 
+本地开发直接运行 `npm start` 时同样会走远端账号校验，并从 `package.json` 读取当前版本号。当前源码版本为 `0.1.24`；没有 `commercial-config.json` 时不应再显示 `0.0.0-dev`，避免本地调试被更新器误判为极旧版本。
+
 仅本地演示时启用 Mock：
 
 ```powershell
@@ -126,6 +128,7 @@ npm start
 
 - 写入 `commercial-config.json`
 - 注入账号服务地址、更新验签公钥和完整性清单公钥
+- 将 `package.json.version`、包内 `commercial-config.version` 和安装器版本保持一致；开发态无 `commercial-config.json` 时从 `package.json` 读取版本
 - 清理源码、测试、`.map`、`.env`、数据库、密钥、C/C++ 源码和 `src/` 目录
 - 生成并签名 `integrity_manifest.json`
 - 完整性清单仅保护明确列出的启动、登录、会员验签、更新验签、本地付费拦截文件与 `package.json`；用户素材、导出、缓存、数据库、本地模型配置、前端页面和普通运行时文件不纳入清单

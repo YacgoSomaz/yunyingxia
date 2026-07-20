@@ -1,6 +1,6 @@
 {
   "name": "yunyingxia",
-  "version": "0.1.0",
+  "version": "0.1.24",
   "private": true,
   "description": "运营虾 - 本地优先的 AI 自媒体运营工作台",
   "main": "dist-electron/electron/main.js",
