@@ -21,6 +21,7 @@ const sse_manager_1 = require("../services/sse-manager");
 const cloud_llm_config_1 = require("../services/cloud-llm-config");
 const license_1 = require("../services/license");
 const local_llm_config_1 = require("../services/local-llm-config");
+const official_ai_client_1 = require("../services/official-ai-client");
 const router = (0, express_1.Router)();
 const ok = (data) => ({ success: true, data });
 const fail = (err) => ({ success: false, error: String(err?.message || err) });
@@ -129,6 +130,136 @@ router.delete('/local-config', async (_req, res) => {
 router.post('/local-config/test', async (req, res) => {
     try {
         res.json(ok(await local_llm_config_1.localLlmConfig.test(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.get('/ai-source', async (_req, res) => {
+    try {
+        res.json(ok({ aiSource: await local_llm_config_1.localLlmConfig.getAiSource() }));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/ai-source', async (req, res) => {
+    try {
+        const saved = await local_llm_config_1.localLlmConfig.saveAiSource(req.body || {});
+        await llm_config_1.llmConfig.reloadIntoRuntime();
+        res.json(ok(saved));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.get('/official-catalog', async (_req, res) => {
+    try {
+        res.json(ok(await official_ai_client_1.officialAiClient.getCatalog()));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.get('/local-video-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.getVideoPublicConfig()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-video-config', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.saveVideo(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.delete('/local-video-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.removeVideo()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-video-config/test', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.testVideo(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.get('/local-image-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.getImagePublicConfig()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-image-source', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.saveImageSource(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.post('/local-image-config', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.saveImage(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.delete('/local-image-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.removeImage()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-image-config/test', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.testImage(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.get('/local-voice-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.getVoicePublicConfig()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-voice-config', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.saveVoice(req.body || {})));
+    }
+    catch (err) {
+        res.status(400).json(fail(err));
+    }
+});
+router.delete('/local-voice-config', async (_req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.removeVoice()));
+    }
+    catch (err) {
+        res.status(500).json(fail(err));
+    }
+});
+router.post('/local-voice-config/test', async (req, res) => {
+    try {
+        res.json(ok(await local_llm_config_1.localLlmConfig.testVoice(req.body || {})));
     }
     catch (err) {
         res.status(400).json(fail(err));

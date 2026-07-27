@@ -34,6 +34,7 @@ const tts_minimax_1 = require("./tts-minimax");
 const tts_edge_1 = require("./tts-edge");
 const cloud_llm_config_1 = require("./cloud-llm-config");
 const llm_tier_config_1 = require("./llm-tier-config");
+const local_llm_config_1 = require("./local-llm-config");
 const dashscope_file_upload_1 = require("./dashscope-file-upload");
 const tts_clone_1 = require("./tts-clone");
 const tts_minimax_clone_1 = require("./tts-minimax-clone");
@@ -464,12 +465,24 @@ function voiceById(id) {
 }
 async function getVoiceCloudResolved() {
     try {
+        const localVoice = await local_llm_config_1.localLlmConfig.getVoiceCredential();
+        if (localVoice?.apiKey) {
+            return {
+                ok: true,
+                apiKey: localVoice.apiKey,
+                modelName: localVoice.model || '',
+                baseUrl: localVoice.baseUrl,
+                providerCode: localVoice.providerCode,
+                cloudId: 'local-voice',
+                source: 'local-voice',
+            };
+        }
         const r = await llm_tier_config_1.llmTierConfig.resolveCategory('voice');
         if (!r?.cloudId) {
             return {
                 ok: false,
                 reason: 'no-config',
-                message: '云端未配置语音(voice)模型,请到 qianshanai.cn 网页端配置',
+                message: '未配置语音(voice)模型，请在运营虾本地口播模型配置里填写百炼 Key',
             };
         }
         const apiKey = await (0, cloud_llm_config_1.getDecryptedKey)(r.cloudId);
@@ -487,6 +500,7 @@ async function getVoiceCloudResolved() {
             baseUrl: r.baseUrl,
             providerCode: r.providerCode,
             cloudId: r.cloudId,
+            source: 'cloud-voice',
         };
     }
     catch (err) {
@@ -2744,14 +2758,22 @@ AI 做不到：理解文案深层情感、匹配你账号风格、提供真人�
         let cloudModelName;
         let hasCloudConfig = false;
         try {
-            const r = await llm_tier_config_1.llmTierConfig.resolveCategory('voice');
-            if (r?.cloudId) {
+            const localVoice = await local_llm_config_1.localLlmConfig.getVoiceCredential();
+            if (localVoice?.apiKey) {
+                hasCloudConfig = true;
+                cloudModelName = localVoice.model;
+                logger_1.logger.info(`[listVoices] 本地 voice 配置 provider=${localVoice.providerCode} modelName=${cloudModelName}`);
+            }
+            else {
+                const r = await llm_tier_config_1.llmTierConfig.resolveCategory('voice');
+                if (r?.cloudId) {
                 hasCloudConfig = true;
                 cloudModelName = r.model;
                 logger_1.logger.info(`[listVoices] 档位 voice cloudId=${r.cloudId} provider=${r.providerCode} modelName=${cloudModelName}`);
-            }
-            else {
+                }
+                else {
                 logger_1.logger.info(`[listVoices] 档位未解析到 voice 配置`);
+                }
             }
         }
         catch (err) {
@@ -2849,7 +2871,7 @@ AI 做不到：理解文案深层情感、匹配你账号风格、提供真人�
         if (cloudModelName.startsWith('MiniMax/')) {
             // ─── MiniMax 克隆路径 ───
             if (!cloudApiKey) {
-                throw new Error('未配置百炼 voice key,请到 qianshanai.cn 配置');
+                throw new Error('未配置百炼 voice key，请在运营虾本地模型配置里填写口播/声音克隆配置');
             }
             voiceId = await (0, tts_minimax_clone_1.createMiniMaxCloneVoice)({
                 audioUrl: ossUrl,

@@ -57,6 +57,15 @@ router.put('/prefs', (0, validate_1.validateBody)(PrefsUpdateSchema), (req, res)
         res.status(500).json(fail(err));
     }
 });
+router.delete('/prefs', (_req, res) => {
+    try {
+        res.json(ok(digital_human_prefs_1.digitalHumanPrefs.clear()));
+    }
+    catch (err) {
+        logger_1.logger.error('digital-human/prefs DELETE error: ' + err);
+        res.status(500).json(fail(err));
+    }
+});
 /**
  * 非破坏性 smoke test:
  *   - 当前 provider 是阿里:只确认云端 voice 类百炼 key 拉得到

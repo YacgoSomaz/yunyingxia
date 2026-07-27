@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { CommercialConfig } from './commercial-config'
 import { verifyEd25519Signature } from './license-crypto'
 
-export const ACCOUNT_REFRESH_INTERVAL_SECONDS = 60
+export const ACCOUNT_REFRESH_INTERVAL_SECONDS = 10
 const ACCOUNT_LICENSE_MAX_LIFETIME_SECONDS = 10 * 60
 export const OPERATION_PRODUCT_ID = 'operation_shrimp'
 export const OPERATION_ENTITLEMENT = 'operation_course'
@@ -155,7 +155,21 @@ function deriveMemberLevel(plan: unknown, active: boolean): AccountUser['member_
 
 export function normalizeAccountUser(input: unknown, now = Date.now()): AccountUser {
   const row = (input && typeof input === 'object' ? input : {}) as Partial<AccountUser>
-  const energy = Number(row.energy_balance || 0)
+  const looseRow = row as Partial<AccountUser> & Record<string, unknown>
+  const energyValue =
+    looseRow.energy_balance
+    ?? looseRow.energyBalance
+    ?? looseRow.energy
+    ?? looseRow.balance
+    ?? looseRow.credits_balance
+    ?? looseRow.creditsBalance
+    ?? looseRow.credit_balance
+    ?? looseRow.creditBalance
+    ?? looseRow.available_energy
+    ?? looseRow.availableEnergy
+    ?? looseRow.points
+    ?? 0
+  const energy = Number(energyValue || 0)
   const serverTime = String(row.server_time || new Date(now).toISOString())
   const serverNow = Date.parse(serverTime)
   const referenceNow = Number.isFinite(serverNow) ? serverNow : now
@@ -344,6 +358,10 @@ function isAccountTrustError(error: unknown): boolean {
     && /^(账号授权包|账号服务未返回签名授权包)/.test(error.message)
 }
 
+function isExpiredAccountLicenseError(error: unknown): boolean {
+  return error instanceof Error && error.message === '账号授权包已过期，请重新登录'
+}
+
 export class AccountService {
   private readonly config: CommercialConfig
   private readonly cachePath: string
@@ -364,11 +382,13 @@ export class AccountService {
   }
 
   private async request(endpoint: string, options: { method?: string; body?: Record<string, unknown>; cookie?: string } = {}): Promise<{ data: Record<string, unknown>; setCookie: string | null }> {
+    const noCacheAccountRefresh = endpoint === '/api/auth/me'
     const response = await fetch(this.url(endpoint), {
       method: options.method || 'GET',
       headers: {
         accept: 'application/json',
         'x-product-code': OPERATION_PRODUCT_ID,
+        ...(noCacheAccountRefresh ? { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } : {}),
         ...(options.body ? { 'content-type': 'application/json' } : {}),
         ...(options.cookie ? { cookie: options.cookie } : {}),
       },
@@ -384,27 +404,69 @@ export class AccountService {
     const publicKey = String(this.config.accountPublicKey || '').trim()
     const envelope = data.account_license
     if (!publicKey) throw new Error('账号验签公钥未配置')
-    return verifyAccountEnvelope(envelope as AccountLicense, publicKey)
+    const trusted = verifyAccountEnvelope(envelope as AccountLicense, publicKey)
+    const displayUser = data.user && typeof data.user === 'object'
+      ? normalizeAccountUser({ ...trusted.user, ...(data.user as Record<string, unknown>) })
+      : trusted.user
+    return { ...trusted, user: displayUser }
   }
 
-  private readCache(): AccountState | null {
+  private readStoredState(): AccountState | null {
     if (!fs.existsSync(this.cachePath)) return null
     try {
       const wrapper = JSON.parse(fs.readFileSync(this.cachePath, 'utf8')) as { encrypted?: string }
       if (!wrapper.encrypted || !safeStorage.isEncryptionAvailable()) return null
-      const state = JSON.parse(safeStorage.decryptString(Buffer.from(wrapper.encrypted, 'base64'))) as AccountState
+      return JSON.parse(safeStorage.decryptString(Buffer.from(wrapper.encrypted, 'base64'))) as AccountState
+    } catch {
+      return null
+    }
+  }
+
+  private readCache(): AccountState | null {
+    try {
+      const state = this.readStoredState()
+      if (!state) return null
       const publicKey = String(this.config.accountPublicKey || '').trim()
       if (!publicKey || !state.accountLicense) return null
       const trusted = verifyAccountEnvelope(state.accountLicense, publicKey)
+      const displayUser = normalizeAccountUser({ ...trusted.user, ...state.user })
       return {
         ...state,
-        user: trusted.user,
+        user: displayUser,
         products: trusted.products,
         productsAuthoritative: true,
         signedUntil: trusted.signedUntil,
         accountLicense: trusted.accountLicense,
       }
     } catch {
+      return null
+    }
+  }
+
+  private readRefreshableCache(): AccountState | null {
+    const state = this.readStoredState()
+    if (!state?.cookie) return null
+    const publicKey = String(this.config.accountPublicKey || '').trim()
+    if (!publicKey || !state.accountLicense) return state
+    try {
+      const trusted = verifyAccountEnvelope(state.accountLicense, publicKey)
+      const displayUser = normalizeAccountUser({ ...trusted.user, ...state.user })
+      return {
+        ...state,
+        user: displayUser,
+        products: trusted.products,
+        productsAuthoritative: true,
+        signedUntil: trusted.signedUntil,
+        accountLicense: trusted.accountLicense,
+      }
+    } catch (error) {
+      if (isExpiredAccountLicenseError(error)) {
+        return {
+          ...state,
+          productsAuthoritative: false,
+          signedUntil: undefined,
+        }
+      }
       return null
     }
   }
@@ -453,7 +515,7 @@ export class AccountService {
     return state
   }
 
-  async refresh(state = this.readCache()): Promise<AccountState | null> {
+  async refresh(state = this.readRefreshableCache()): Promise<AccountState | null> {
     if (!state?.cookie) return null
     try {
       const { data } = await this.request('/api/auth/me', { cookie: state.cookie })
@@ -480,7 +542,7 @@ export class AccountService {
   }
 
   async ensureSession(): Promise<AccountState | null> {
-    const cached = this.readCache()
+    const cached = this.readRefreshableCache()
     if (!cached) return null
     return this.refresh(cached)
   }
@@ -497,7 +559,7 @@ export class AccountService {
   // Paid local API actions call this instead of trusting the cached state. A
   // short, still-signed cache is only retained for a transient network outage.
   async verifyOperationEntitlement(): Promise<OperationEntitlementResult> {
-    const cached = this.readCache()
+    const cached = this.readRefreshableCache()
     if (!cached?.cookie) return { state: null, entitled: false, source: 'denied' }
     try {
       const refreshed = await this.refresh(cached)
@@ -537,7 +599,7 @@ export class AccountService {
   }
 
   async createWebHandoff(): Promise<string> {
-    const state = this.readCache()
+    const state = this.readRefreshableCache()
     if (!state?.cookie) throw new Error('请先登录账号')
     try {
       const { data } = await this.request('/api/auth/web-handoff', { method: 'POST', cookie: state.cookie })
@@ -564,13 +626,14 @@ export class AccountService {
   ): NodeJS.Timeout {
     const run = async () => {
       const cached = this.readCache()
-      if (!cached) {
+      const refreshable = cached ?? this.readRefreshableCache()
+      if (!refreshable) {
         onInvalid(new Error('登录已失效，请重新登录。'))
         return
       }
-      if (Math.floor(Date.now() / 1000) - cached.lastCheckedAt < ACCOUNT_REFRESH_INTERVAL_SECONDS) return
+      if (cached && Math.floor(Date.now() / 1000) - cached.lastCheckedAt < ACCOUNT_REFRESH_INTERVAL_SECONDS) return
       try {
-        const refreshed = await this.refresh(cached)
+        const refreshed = await this.refresh(refreshable)
         if (!refreshed) {
           onInvalid(new Error('登录已失效，请重新登录。'))
           return

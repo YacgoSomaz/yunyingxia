@@ -41,7 +41,7 @@ async function fetchWithTimeout(url, init, timeoutMs) {
 async function synthesizeDashScopeToMp3(opts) {
     // Key 必须由调用方传入(云端 user_llm_config voice 类型 decrypt)
     if (!opts.apiKey) {
-        throw new Error('百炼 TTS:apiKey 缺失,请先在 qianshanai.cn 配置 voice 类百炼 key');
+        throw new Error('百炼 TTS:apiKey 缺失，请到「设置 → AI 模型/算力」填写口播/声音克隆百炼 Key');
     }
     const apiKey = opts.apiKey;
     const text = (opts.text || '').trim();

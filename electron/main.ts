@@ -9,6 +9,42 @@ import { verifyIntegrity } from './integrity-verifier'
 import { seedLegacyRuntimeAssets } from './legacy-seed'
 import { registerUpdateService } from './update-service'
 
+function isBrokenPipeError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'EPIPE')
+}
+
+function installBrokenPipeGuard(): void {
+  const stdioStreams = [process.stdout, process.stderr]
+
+  for (const stream of stdioStreams) {
+    stream.on('error', (error) => {
+      if (isBrokenPipeError(error)) return
+      throw error
+    })
+
+    const originalWrite = stream.write.bind(stream) as typeof stream.write
+    stream.write = ((chunk: unknown, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+      try {
+        if (typeof encoding === 'function') {
+          return originalWrite(chunk as string | Uint8Array, (error?: Error | null) => {
+            if (isBrokenPipeError(error)) return
+            encoding(error)
+          })
+        }
+        return originalWrite(chunk as string | Uint8Array, encoding, (error?: Error | null) => {
+          if (isBrokenPipeError(error)) return
+          callback?.(error)
+        })
+      } catch (error) {
+        if (isBrokenPipeError(error)) return false
+        throw error
+      }
+    }) as typeof stream.write
+  }
+}
+
+installBrokenPipeGuard()
+
 let mainWindow: BrowserWindow | null = null
 let accountRefreshTimer: NodeJS.Timeout | null = null
 let accountLoginPending = false

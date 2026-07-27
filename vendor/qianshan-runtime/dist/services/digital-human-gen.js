@@ -108,7 +108,7 @@ async function generateViaAliyunWanS2V(req) {
     // 1) 拿 API key
     const apiKey = await getDashscopeKey();
     if (!apiKey) {
-        throw new Error('云端未配置百炼 voice key — 数字人功能复用 voice 类 key,请先到 qianshanai.cn 配置');
+        throw new Error('未配置百炼 voice key — 数字人功能复用口播/声音克隆配置，请到「设置 → AI 模型/算力」填写本地百炼 Key');
     }
     // 2) 上传音频 + 图片到 dashscope OSS
     // model 必须传 wan2.2-s2v(百炼按 model 隔离访问权限)

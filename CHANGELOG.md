@@ -2,8 +2,29 @@
 
 ## 未发布
 
-- 修复本地开发目录直接启动时显示 `0.0.0-dev` 的问题：源码 `package.json` / `package-lock.json` 同步到 `0.1.24`，无 `commercial-config.json` 时商业配置会从 `package.json` 读取版本。
+- 源码版本推进到 `0.1.33`，后续商业包不得继续复用已打出的 `0.1.31` 坏包版本号。
+- 账号权益后台刷新从 60 秒缩短到 10 秒：启动时仍主动请求 `/api/auth/me`，运行中后台停用、过期、禁用或无 `operation_course` 时，下一次刷新或付费操作会清除本地权益并阻止功能。
+- 商业构建新增核心 JS 强混淆硬化步骤：在签名完整性清单前处理账号验签、登录窗口、完整性校验、更新验签、本地付费拦截、官方 AI 客户端等文件，启用压缩、控制流打散、字符串数组编码、字符串拆分、对象键转换和少量死代码注入；这仍不是 native 级强加密，后续真正加固需迁移到 native 启动器或 `.node` 二进制模块。
+- 商业包完整性策略继续保持核心白名单模式，并显式排除 `data/`、`exports/`、`downloads/`、`cache/`、`logs/`、`cookies/`、`tmp/`、`vendor/qianshan-runtime/data/`、`vendor/qianshan-runtime/uploads/`、`vendor/qianshan-runtime/exports/` 等用户可变路径，避免导入素材、导出文件、缓存或本地数据变化导致启动失败。
+- 运营虾客户端新增官方图片算力适配：保留本地自配图片模型，同时支持 `operation_image` 官方积分任务；官方模式只信服务端 catalog 和 job 返回的 `result_assets[].display_url / download_url`，不在客户端保存或拼接官方模型、API Key、OSS/CDN 地址。
+- 官方 AI 算力接入按统一协议收紧：`custom` 仅代表用户本地自配 Key，`official` 只请求 anyq.site 的 catalog/jobs，固定 `operation_shrimp` 与 `X-Product-Code`，任务请求体不提交官方 Key、模型地址、模型名、供应商、system prompt 或价格。
+- 官方图片结果优先保留并使用 `result_assets[].display_url`，缺失时兼容 `download_url`；需要本地缓存时由 Electron 主进程下载到本机路径，避免 WebView 跨域抓图。
+- AI 图片生成移除旧云端图片配置兜底，避免未选择本地配置或官方算力时悄悄回退到旧千山网页配置路径。
+- 商业构建脚本新增 Ed25519 公钥长度校验：账号权益公钥和更新器公钥必须为 Base64URL 编码的 32 字节公钥，避免截断的 `update-v1` 公钥进入安装包并触发“Ed25519 公钥长度无效”。
+- 下一版安装包输出到 `release/operation-shrimp/0.1.33/YunyingxiaSetup_0.1.33.exe`，生成后以构建输出的 SHA256、字节数和 Authenticode 状态为准。
+
+## 0.1.26 - 2026-07-20
+
+- 升级发布版本，避免已经上传过的 `0.1.25` 与后续商业重打包产物出现“同版本不同 SHA-256”的更新混淆。
+- 账号权益刷新请求 `/api/auth/me` 增加 `Cache-Control: no-cache` 与 `Pragma: no-cache`，降低代理/CDN/中间层缓存导致后台停用后客户端继续沿用旧权益的风险。
+- 保持只信 Ed25519 签名 `account_license`，不使用根节点 `products`、旧 `membership_*` 字段或余额字段解锁运营虾会员功能。
+
+## 0.1.25 - 2026-07-20
+
+- 修复本地开发目录直接启动时显示 `0.0.0-dev` 的问题：源码 `package.json` / `package-lock.json` 同步到 `0.1.25`，无 `commercial-config.json` 时商业配置会从 `package.json` 读取版本。
 - 增加配置回归测试，防止开发态版本回退到 `0.0.0` 并误触发更新判断。
+- 修复短期 `account_license` 过期后客户端无法用本地 Cookie 刷新 `/api/auth/me` 的问题：过期签名不再解锁功能，但仍可作为会话载体向远端换取新的签名权益。
+- 重新打包 `release/operation-shrimp/0.1.25/YunyingxiaSetup_0.1.25.exe`，SHA256 `4fc1e47a6b9628c50fb25df9021b0383c020907ebcf8cf214ac066ad8bba198e`，大小 `184,661,662` 字节，当前未接入 Authenticode 代码签名。
 
 ## 0.1.24 - 2026-07-17
 

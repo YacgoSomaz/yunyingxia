@@ -18,6 +18,7 @@ class DouyinPublisher extends base_1.PlatformPublisher {
     platformLabel = '抖音';
     loginUrl = 'https://creator.douyin.com/';
     cookieDomain = '.douyin.com';
+    cookieDomains = ['.douyin.com', 'douyin.com', '.creator.douyin.com', 'creator.douyin.com'];
     publishFields = [
         {
             key: 'title',
@@ -61,19 +62,55 @@ class DouyinPublisher extends base_1.PlatformPublisher {
     publishEntryUrl() {
         return 'https://creator.douyin.com/creator-micro/content/upload';
     }
+    isStillOnPublishArea(currentUrl) {
+        if (!currentUrl || this.isExplicitLoginUrl(currentUrl))
+            return false;
+        try {
+            const cur = new URL(currentUrl);
+            if (cur.host !== 'creator.douyin.com')
+                return false;
+            return cur.pathname.startsWith('/creator-micro/');
+        }
+        catch {
+            return false;
+        }
+    }
+    async hasLoggedInPageSignal(win, currentUrl) {
+        try {
+            const cur = new URL(currentUrl || '');
+            if (cur.host !== 'creator.douyin.com')
+                return false;
+            const text = await (0, browser_automation_1.evaluate)(win, `(() => (document.body.innerText || '').slice(0, 5000))()`);
+            const body = String(text || '');
+            const loginCue = /扫码登录|手机登录|验证码登录|登录后|请先登录|立即登录/.test(body);
+            const workspaceCue = /发布作品|内容管理|作品管理|数据中心|互动管理|创作灵感|经营工具|工作台|创作者服务/.test(body);
+            if (loginCue && !workspaceCue)
+                return false;
+            return workspaceCue || cur.pathname === '/' || cur.pathname.startsWith('/creator-micro');
+        }
+        catch {
+            return false;
+        }
+    }
     async performLogin(win) {
         // 登录成功后抖音会跳到 /creator-micro/xxx 子路径
         // 注意：不能用 [class*="avatar"] 之类的广义选择器兜底——登录页本身也有这些元素
-        await this.waitForLoginSuccess(win, {
-            expectUrlPrefixes: [
-                'https://creator.douyin.com/creator-micro/home',
-                'https://creator.douyin.com/creator-micro/content',
-                'https://creator.douyin.com/creator-micro/data',
-                'https://creator.douyin.com/creator-micro/comment',
-                'https://creator.douyin.com/creator-micro/',
-            ],
-            timeoutMs: 180_000,
-        });
+        await (0, browser_automation_1.waitForCondition)(win, `(() => {
+      const url = window.location.href;
+      const prefixes = [
+        'https://creator.douyin.com/creator-micro/home',
+        'https://creator.douyin.com/creator-micro/content',
+        'https://creator.douyin.com/creator-micro/data',
+        'https://creator.douyin.com/creator-micro/comment',
+        'https://creator.douyin.com/creator-micro/',
+      ];
+      if (prefixes.some((prefix) => url.startsWith(prefix))) return true;
+      const body = document.body.innerText || '';
+      const loginCue = /扫码登录|手机登录|验证码登录|登录后|请先登录|立即登录/.test(body);
+      const workspaceCue = /发布作品|内容管理|作品管理|数据中心|互动管理|创作灵感|经营工具|工作台|创作者服务/.test(body);
+      if (loginCue && !workspaceCue) return false;
+      return workspaceCue;
+    })()`, { timeoutMs: 180_000, intervalMs: 1500 });
         await new Promise((r) => setTimeout(r, 2000));
     }
     async performPublish(win, input) {

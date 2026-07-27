@@ -1,6 +1,6 @@
 {
   "name": "yunyingxia",
-  "version": "0.1.24",
+  "version": "0.1.33",
   "private": true,
   "description": "运营虾 - 本地优先的 AI 自媒体运营工作台",
   "main": "dist-electron/electron/main.js",
@@ -16,7 +16,6 @@
     "package:yunyingxia": "pwsh -NoProfile -File packaging\\build\\build_yunyingxia_release.ps1"
   },
   "dependencies": {
-    "electron": "30.5.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zod": "^3.24.2"
@@ -29,6 +28,8 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
+    "electron": "^43.2.0",
+    "javascript-obfuscator": "^5.5.0",
     "rcedit": "^5.0.2",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",

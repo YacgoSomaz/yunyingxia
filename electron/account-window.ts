@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { hasActiveAccess, type AccountService } from './account-service'
+import { AccountHttpError, hasActiveAccess, type AccountService } from './account-service'
 
 let activeWindow: BrowserWindow | null = null
 let handlerRegistered = false
@@ -46,11 +46,12 @@ function levelName(level){return ({free:'普通用户',monthly:'月度会员',qu
 function featureText(features){return Array.isArray(features)&&features.length?features.join('、'):'暂无'}
 function addText(parent,tag,className,text){const el=document.createElement(tag);if(className)el.className=className;el.textContent=text;parent.appendChild(el);return el}
 function showPlans(plans){$('plans').textContent='';for(const plan of plans||[]){const el=document.createElement('div');el.className='plan';const left=document.createElement('div');addText(left,'strong','',String(plan.name||plan.id));addText(left,'span','muted',String(plan.durationDays||0)+' 天');const right=document.createElement('div');addText(right,'div','price',money(plan.amountCents));el.appendChild(left);el.appendChild(right);$('plans').appendChild(el)}}
-function showMember(state,plans){$('login').style.display='none';$('member').style.display='block';const user=state&&state.user;const product=operationProduct(state);const productText=product?('运营虾：'+product.status+'；到期：'+(product.expires_at||'未开通')):'运营虾尚未开通';$('accountState').textContent=product&&product.status==='active'?'运营虾会员有效':(user?levelName(user.member_level):'未登录');$('memberText').textContent=user?('当前账号：'+user.phone+'；'+productText+'；权益：'+featureText(product&&product.entitlements)):'请先登录。';showPlans(plans);if(user&&active(state)){setStatus('会员状态有效，正在进入工作台…',true);return}setStatus(user?'当前账号未开通运营虾。':'请先登录。')}
-async function refresh(){const res=await window.electronAPI.account.me();const plans=await window.electronAPI.account.plans();if(res.state){showMember(res.state,plans.plans);if(active(res.state))return true}return false}
+function closeWhenEntitled(){setTimeout(()=>window.close(),250)}
+function showMember(state,plans,entitled=false){$('login').style.display='none';$('member').style.display='block';const user=state&&state.user;const product=operationProduct(state);const productText=product?('运营虾：'+product.status+'；到期：'+(product.expires_at||'未开通')):'运营虾尚未开通';$('accountState').textContent=entitled?'运营虾会员有效':(product&&product.status==='active'?'运营虾会员待刷新':(user?levelName(user.member_level):'未登录'));$('memberText').textContent=user?('当前账号：'+user.phone+'；'+productText+'；权益：'+featureText(product&&product.entitlements)):'请先登录。';showPlans(plans);if(user&&entitled){setStatus('会员状态有效，正在进入工作台…',true);closeWhenEntitled();return}setStatus(user?'当前账号未开通运营虾或权益签名已过期，请刷新权益。':'请先登录。')}
+async function refresh(){const res=await window.electronAPI.account.me();const plans=await window.electronAPI.account.plans();if(res.state){showMember(res.state,plans.plans,res.entitled===true);if(res.entitled===true)return true}return false}
 async function boot(){try{await refresh()}catch{}}
 $('send').onclick=async()=>{setStatus('正在发送验证码…');$('send').disabled=true;try{const r=await window.electronAPI.account.sendCode($('phone').value);if(!r.ok)throw new Error(r.error||'发送失败');setStatus(r.message||'验证码已发送',true)}catch(e){setStatus(e.message||'发送失败')}finally{setTimeout(()=>$('send').disabled=false,5000)}};
-$('loginBtn').onclick=async()=>{setStatus('正在登录…');try{const r=await window.electronAPI.account.login($('phone').value,$('code').value);if(!r.ok)throw new Error(r.error||'登录失败');if(r.entitled){setStatus('会员状态有效，正在进入工作台…',true);return}showMember(r.state,r.plans);setStatus('登录成功，请到网页充值续费运营虾后刷新状态。')}catch(e){setStatus(e.message||'登录失败')}};
+$('loginBtn').onclick=async()=>{setStatus('正在登录…');try{const r=await window.electronAPI.account.login($('phone').value,$('code').value);if(!r.ok)throw new Error(r.error||'登录失败');if(r.entitled){setStatus('会员状态有效，正在进入工作台…',true);closeWhenEntitled();return}showMember(r.state,r.plans,false);setStatus('登录成功，请到网页充值续费运营虾后刷新状态。')}catch(e){setStatus(e.message||'登录失败')}};
 $('logout').onclick=async()=>{await window.electronAPI.account.logout();location.reload()};
 $('recharge').onclick=async()=>{const r=await window.electronAPI.account.openRechargePortal();if(!r.ok)setStatus(r.error||'打开充值网页失败');else setStatus('已打开充值网页，完成续费后请刷新状态。',true)};
 $('refresh').onclick=async()=>{setStatus('正在刷新账号状态…');try{if(await refresh())return;setStatus('暂未检测到有效会员，请确认支付已完成。')}catch(e){setStatus(e.message||'刷新失败')}};
@@ -89,9 +90,16 @@ function registerAccountHandlers(): void {
   if (handlerRegistered) return
   ipcMain.handle('account:me', async () => {
     try {
-      const state = activeService?.currentState() ?? null
-      return { ok: true, state: activeService?.publicView(state) ?? null, entitled: hasActiveAccess(state) }
+      const state = await activeService?.ensureSession() ?? null
+      const entitled = hasActiveAccess(state)
+      if (entitled) activeWindowAuthenticated = true
+      return { ok: true, state: activeService?.publicView(state) ?? null, entitled }
     } catch (error) {
+      if (error instanceof AccountHttpError && error.authoritative) {
+        return { ok: false, error: error.message || '账号状态已失效' }
+      }
+      const state = activeService?.currentState() ?? null
+      if (state) return { ok: true, state: activeService?.publicView(state) ?? null, entitled: hasActiveAccess(state), stale: true }
       return { ok: false, error: error instanceof Error ? error.message : '账号状态读取失败' }
     }
   })

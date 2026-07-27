@@ -28,6 +28,28 @@ function Assert-UnderProject([string]$Target) {
   }
 }
 
+function ConvertFrom-Base64Url([string]$Value, [string]$Label) {
+  $normalized = $Value.Trim().Replace('-', '+').Replace('_', '/')
+  switch ($normalized.Length % 4) {
+    0 { break }
+    2 { $normalized += '==' }
+    3 { $normalized += '=' }
+    default { throw "$Label 不是有效 Base64URL" }
+  }
+  try {
+    return [Convert]::FromBase64String($normalized)
+  } catch {
+    throw "$Label 不是有效 Base64URL: $($_.Exception.Message)"
+  }
+}
+
+function Assert-Ed25519PublicKey([string]$Value, [string]$Label) {
+  $bytes = ConvertFrom-Base64Url $Value $Label
+  if ($bytes.Length -ne 32) {
+    throw "$Label 长度无效: 解码后 $($bytes.Length) 字节，应为 32 字节"
+  }
+}
+
 Assert-UnderProject $OutputRoot
 $package = Get-Content (Join-Path $ProjectRoot 'package.json') -Raw | ConvertFrom-Json
 if (-not $Version) { $Version = [string]$package.version }
@@ -38,6 +60,8 @@ if ($Commercial) {
   if ($accountUri.Scheme -ne 'https') { throw '商业版账号服务必须使用 HTTPS' }
   if (-not $AccountPublicKey.Trim()) { throw '商业版构建必须提供 -AccountPublicKey' }
   if (-not $UpdatePublicKey.Trim()) { throw '商业版构建必须提供 -UpdatePublicKey' }
+  Assert-Ed25519PublicKey $AccountPublicKey '账号权益 Ed25519 公钥'
+  Assert-Ed25519PublicKey $UpdatePublicKey '更新器 Ed25519 公钥'
   if ($ProductCode -ne 'operation_shrimp') { throw '运营虾商业包产品代码必须为 operation_shrimp' }
   if (-not $IntegrityPrivateKeyPath) { throw '商业版构建必须提供 -IntegrityPrivateKeyPath' }
 }
@@ -136,10 +160,21 @@ Invoke-Step 'node.exe' @(
   $rendererBundlePatch,
   (Join-Path $appRoot 'vendor\qianshan-runtime\renderer\dist\assets\index-BponW6ps.js')
 )
+$rendererBgmPatch = Join-Path $ProjectRoot 'scripts\patch-bgm-playback.cjs'
+Invoke-Step 'node.exe' @(
+  $rendererBgmPatch,
+  (Join-Path $appRoot 'vendor\qianshan-runtime\renderer\dist\assets\index-BponW6ps.js')
+)
+$rendererWorkspaceCachePatch = Join-Path $ProjectRoot 'scripts\patch-workspace-cache.cjs'
+Invoke-Step 'node.exe' @(
+  $rendererWorkspaceCachePatch,
+  (Join-Path $appRoot 'vendor\qianshan-runtime\renderer\dist\assets\index-BponW6ps.js')
+)
 
 Write-Host "[4/7] 写入商业配置并清理源码/开发文件"
 $manifestTool = Join-Path $ProjectRoot 'packaging\build\manifest-tool.cjs'
 $asarTool = Join-Path $ProjectRoot 'packaging\build\package-app.cjs'
+$hardenCoreJsTool = Join-Path $ProjectRoot 'packaging\build\harden-core-js.cjs'
 $temporaryIntegrityKey = $false
 if (-not $IntegrityPrivateKeyPath) {
   $IntegrityPrivateKeyPath = Join-Path $env:TEMP "wanshan-integrity-$([guid]::NewGuid().ToString('N')).pem"
@@ -216,6 +251,11 @@ $forbiddenDirs = Get-ChildItem $appRoot -Recurse -Directory -Force | Where-Objec
   $_.Name -match '^(src|test|tests|__tests__|\.git)$'
 }
 if ($forbiddenDirs) { throw "发布目录仍包含源码/测试目录: $($forbiddenDirs.FullName -join ', ')" }
+
+if ($Commercial) {
+  Write-Host "商业包核心 JS 压缩硬化"
+  Invoke-Step 'node.exe' @($hardenCoreJsTool, $appRoot)
+}
 
 Write-Host "[5/7] 生成 integrity_manifest.json"
 $integrityPolicyModule = Join-Path $ProjectRoot 'dist-electron\electron\integrity-policy.js'

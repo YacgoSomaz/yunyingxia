@@ -2,7 +2,7 @@
 
 运营虾是一套本地优先的 AI 自媒体桌面工作台，目标是复刻并延续原千山自媒体的核心体验，把选题、文案、提示词模板、视频处理、平台数据和更新授权集中到一个 Windows 客户端中。
 
-当前商业版最新版本：`0.1.24`
+当前源码版本：`0.1.33`
 
 远端仓库：<https://github.com/YacgoSomaz/qianshanzimeiti>
 
@@ -13,7 +13,7 @@
 - 提示词模板：迁移原千山内置模板和风格预设，避免下拉菜单空缺。
 - 视频工坊：复用原千山运行时中的一键生成、视频生成和媒体处理能力。
 - 平台数据：允许可信第三方平台的公开数据和登录态数据接入，不做绝对离线。
-- 商业账号：使用手机号短信登录，登录后可进入界面查看功能；普通用户默认无会员权益，点击高价值功能时会提示开通会员，本地仅缓存账号会话并每 60 秒刷新远端权益。
+- 商业账号：使用手机号短信登录，登录后可进入界面查看功能；普通用户默认无会员权益，点击高价值功能时会提示开通会员，本地仅缓存账号会话并每 10 秒刷新远端权益。
 - 受签名更新：客户端固定使用 `operation_shrimp`，运行中监听 SSE 发布通知并重新请求签名更新载荷；只接受 `update-v1` Ed25519 签名载荷中的 HTTPS 安装包地址，并在下载后核验 SHA-256。
 
 ## 商业账号系统
@@ -39,14 +39,15 @@ https://anyq.site
 - 普通用户默认无会员权益，可以进入主界面，但不能执行需要 `operation_course` 的高价值功能。
 - 支付成功后服务端按 `operation_shrimp` 独立写入产品权益和到期时间。
 - 客户端只信 Ed25519 签名的 `account_license.payload`，根节点 `products`、旧会员字段和余额不得解锁功能。
-- 启动时必须请求远端 `/api/auth/me`；运行中每 60 秒刷新一次账号权益。
+- 启动时必须请求远端 `/api/auth/me`；运行中每 10 秒刷新一次账号权益。
+- 本地 `account_license` 过期时不能继续解锁功能，但仍会保留会话 Cookie 用于启动时请求远端刷新；远端明确拒绝后才清除缓存。
 - 网络失败时可以暂时保留已签名缓存；服务端明确返回未授权、过期、停用或禁用时立即清除本地权益，并阻止付费功能。
 
 ## 项目结构
 
 ```text
 electron/                         Electron 主进程、账号登录、完整性校验、更新器
-electron/account-service.ts        手机号登录、签名 account_license 验权、60 秒刷新、缓存清理
+electron/account-service.ts        手机号登录、签名 account_license 验权、10 秒刷新、缓存清理
 electron/account-window.ts         登录/充值续费窗口
 electron/integrity-policy.ts       商业包完整性白名单，只保护启动/授权/更新关键文件
 electron/release-monitor.ts        SSE 实时更新通知和 60 秒兜底检查
@@ -78,7 +79,7 @@ npm start
 npm test
 ```
 
-本地开发直接运行 `npm start` 时同样会走远端账号校验，并从 `package.json` 读取当前版本号。当前源码版本为 `0.1.24`；没有 `commercial-config.json` 时不应再显示 `0.0.0-dev`，避免本地调试被更新器误判为极旧版本。
+本地开发直接运行 `npm start` 时同样会走远端账号校验，并从 `package.json` 读取当前版本号。当前源码版本为 `0.1.33`；没有 `commercial-config.json` 时不应再显示 `0.0.0-dev`，避免本地调试被更新器误判为极旧版本。
 
 仅本地演示时启用 Mock：
 
@@ -101,6 +102,34 @@ API Key: 用户自己的 DeepSeek 或 OpenAI 兼容 Key
 本地模型配置保存到用户数据目录，API Key 使用 Electron `safeStorage` 加密保存，界面只显示脱敏状态。保存后文案工坊会优先使用本地模型；未配置本地模型时才兼容千山云端配置和环境变量。
 
 中转站适配：客户需要使用中转站时，选择“自定义中转站”，填写中转站给出的 Base URL、模型/接入点 ID 和对应 API Key。这里不做厂商白名单限制，也不强制 HTTPS，按客户实际中转站配置走。
+
+## 官方 AI 算力
+
+运营虾同时支持两种 AI 来源，必须严格区分：
+
+- `custom`：用户本地自配模型。用户可填写自己的 Base URL、模型/接入点 ID 和 API Key，客户端按用户配置直连，Key 只保存在本机 `safeStorage` 加密缓存中。
+- `official`：官方算力。客户端只请求 `https://anyq.site`，固定产品 `operation_shrimp`、权益 `operation_course`，请求头固定 `X-Product-Code: operation_shrimp`；模型地址、官方 API Key、供应商、系统提示词、积分价格和扣费逻辑全部由服务端控制。
+
+官方算力接口：
+
+```text
+GET  /api/v1/ai/catalog?product_id=operation_shrimp
+POST /api/v1/ai/jobs
+GET  /api/v1/ai/jobs/:id
+```
+
+客户端发起官方任务时，请求体只允许包含：
+
+```json
+{
+  "product_id": "operation_shrimp",
+  "task_type": "operation_analysis 或 operation_image",
+  "input_text": "用户本次任务内容",
+  "idempotency_key": "UUID"
+}
+```
+
+同一次用户点击及重试复用同一个 `idempotency_key`，避免重复扣积分。官方图片任务优先展示服务端返回的 `result_assets[].display_url`；需要长期保留或避免 CORS 时，由 Electron 主进程下载到本地缓存/用户项目目录，再切换为本地路径。客户端不得保存、展示、打印或下发官方 API Key、模型地址、供应商名称，不得调用上游 `/models`、`/chat/completions` 或 `/images/generations`。
 
 开发时也支持从环境变量临时注入：
 
@@ -130,8 +159,10 @@ npm start
 - 注入账号服务地址、更新验签公钥和完整性清单公钥
 - 将 `package.json.version`、包内 `commercial-config.version` 和安装器版本保持一致；开发态无 `commercial-config.json` 时从 `package.json` 读取版本
 - 清理源码、测试、`.map`、`.env`、数据库、密钥、C/C++ 源码和 `src/` 目录
+- 对账号验签、登录窗口、完整性校验、更新验签、本地付费拦截和官方 AI 客户端等核心 JS 执行商业包强混淆硬化：压缩、控制流打散、字符串数组编码、字符串拆分、对象键转换和少量死代码注入
 - 生成并签名 `integrity_manifest.json`
 - 完整性清单仅保护明确列出的启动、登录、会员验签、更新验签、本地付费拦截文件与 `package.json`；用户素材、导出、缓存、数据库、本地模型配置、前端页面和普通运行时文件不纳入清单
+- `data/`、`exports/`、`downloads/`、`cache/`、`logs/`、`cookies/`、`tmp/`、`vendor/qianshan-runtime/data/`、`vendor/qianshan-runtime/uploads/`、`vendor/qianshan-runtime/exports/` 等用户可变路径被策略层显式排除，不能因为用户导入素材、保存路径变化、导出文件或缓存变化阻断启动
 - 打包 `app.asar`
 - 生成 Inno Setup 安装包
 
@@ -139,7 +170,7 @@ npm start
 
 ```powershell
 pwsh -File packaging\build\build_yunyingxia_release.ps1 `
-  -Version 0.1.24 `
+  -Version 0.1.33 `
   -Commercial `
   -AccountServerUrl "https://anyq.site" `
   -ProductCode "operation_shrimp" `
@@ -158,10 +189,10 @@ pwsh -NoProfile -File scripts\create-yunyingxia-build-shortcut.ps1
 当前发布产物：
 
 ```text
-release/operation-shrimp/0.1.24/YunyingxiaSetup_0.1.24.exe
-SHA256: 148a2fbdd630c2a7e15eeb27e33f5d20cc21f5b595819bdc8c73e7fa44ad848a
-Size: 184,665,542 bytes
-Authenticode: NotSigned
+release/operation-shrimp/0.1.33/YunyingxiaSetup_0.1.33.exe
+SHA256: d02612494af72be6919361c58dd04fff2f0dfbff9d20e7ed8cf11a0bba57a9ab
+Size: 184,687,494 bytes
+Authenticode: 当前未接入正式代码签名
 ```
 
 更新协议：
@@ -185,9 +216,10 @@ Authenticode: NotSigned
 - 客户端不保存短信密钥、微信支付密钥、后台管理员 token 或服务端私钥。
 - 客户端只保存账号会话 Cookie，使用 Electron `safeStorage` 加密本地缓存。
 - 普通用户默认无权限；真正的功能开关由服务端余额、会员到期时间和后续套餐策略控制。
-- 客户端启动时主动查询 `/api/auth/me`，运行中约 60 秒刷新一次。
+- 客户端启动时主动查询 `/api/auth/me`，运行中约 10 秒刷新一次。
 - 会话失效、会员过期、产品停用或无 `operation_course` 权益时，客户端清除本地权益并阻止付费功能。
-- `asar` 不是加密，只是打包；核心安全依靠服务端权限、完整性校验和发布目录清理。
+- `asar` 不是加密，只是打包；商业构建会对核心 JS 做强混淆硬化，但仍不能宣称“核心 JS 已 native 级强加密”。
+- 服务端权限、10 秒账号心跳、签名完整性清单、核心 JS 强混淆和发布目录清理只能提高普通篡改成本；如果要防会改 ASAR 的人，下一步必须把账号验签、完整性校验、更新验签和本地付费拦截迁到 native 启动器或 `.node` 二进制模块。
 
 ## 数据与隐私
 

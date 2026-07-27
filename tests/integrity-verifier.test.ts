@@ -3,7 +3,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { INTEGRITY_PROTECTED_EXACT_PATHS, isIntegrityProtectedPath } from '../electron/integrity-policy'
+import {
+  INTEGRITY_MUTABLE_PATH_PREFIXES,
+  INTEGRITY_PROTECTED_EXACT_PATHS,
+  isIntegrityMutablePath,
+  isIntegrityProtectedPath,
+} from '../electron/integrity-policy'
 import { verifyIntegrity } from '../electron/integrity-verifier'
 
 const b64url = (value: Buffer) => value.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
@@ -43,6 +48,16 @@ describe('integrity verifier', () => {
     expect(isIntegrityProtectedPath('vendor/qianshan-runtime/dist/paid-action-auth.js')).toBe(true)
     expect(isIntegrityProtectedPath('vendor/qianshan-runtime/renderer/dist/index.html')).toBe(false)
     expect(isIntegrityProtectedPath('vendor/qianshan-runtime/dist/services/llm-config.js')).toBe(false)
+  })
+
+  it('keeps user-mutable paths out of integrity protection', () => {
+    for (const prefix of INTEGRITY_MUTABLE_PATH_PREFIXES) {
+      expect(isIntegrityMutablePath(`${prefix}sample.txt`)).toBe(true)
+      expect(isIntegrityProtectedPath(`${prefix}sample.txt`)).toBe(false)
+    }
+    expect(isIntegrityProtectedPath('vendor/qianshan-runtime/uploads/material.png')).toBe(false)
+    expect(isIntegrityProtectedPath('vendor/qianshan-runtime/data/app.sqlite')).toBe(false)
+    expect(isIntegrityProtectedPath('cache/official-ai/image.png')).toBe(false)
   })
 
   it('allows user content and unlisted runtime files without blocking startup', () => {

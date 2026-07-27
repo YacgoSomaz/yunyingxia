@@ -25,6 +25,7 @@ exports.regenerateOne = regenerateOne;
 // ══════════════════════════════════════════════════════════════════════
 const llm_tier_config_1 = require("./llm-tier-config");
 const cloud_llm_config_1 = require("./cloud-llm-config");
+const local_llm_config_1 = require("./local-llm-config");
 const jimeng_cli_1 = require("./jimeng-cli");
 const logger_1 = require("../utils/logger");
 const fs_1 = __importDefault(require("fs"));
@@ -65,6 +66,18 @@ function normalizeVideoBaseUrl(providerCode, baseUrl) {
     return normalizeOpenAICompatBaseUrl(trimmed);
 }
 async function loadActiveVideoConfig() {
+    const local = await local_llm_config_1.localLlmConfig.getVideoCredential();
+    if (local?.apiKey && local?.providerCode && local?.baseUrl && local?.model) {
+        logger_1.logger.info(`[AIVideo] using local video config provider=${local.providerCode} model=${local.model}`);
+        return {
+            ok: true,
+            providerCode: local.providerCode,
+            baseUrl: normalizeVideoBaseUrl(local.providerCode, local.baseUrl),
+            apiKey: local.apiKey,
+            model: local.model,
+            source: 'local-video',
+        };
+    }
     const r = await llm_tier_config_1.llmTierConfig.resolveCategory('video');
     if (!r || !r.cloudId || !r.providerCode || !r.baseUrl) {
         return { ok: false, reason: 'no-config' };
@@ -104,8 +117,9 @@ function buildAsyncVideoBody(model, req) {
         return { model, input: { prompt: req.prompt }, parameters: { resolution: '1080P', ratio, duration } };
     }
     if (model.startsWith('wan')) {
+        const wanDuration = /^(wan2\.2|wanx2\.1)-t2v/i.test(model) ? 5 : duration;
         const size = req.aspect === '9:16' ? '480*832' : req.aspect === '16:9' ? '832*480' : '640*640';
-        return { model, input: { prompt: req.prompt }, parameters: { size, duration } };
+        return { model, input: { prompt: req.prompt }, parameters: { size, duration: wanDuration } };
     }
     if (/seedance|doubao/i.test(model)) {
         return { model, prompt: req.prompt, resolution: '720p', ratio, duration };
@@ -984,9 +998,9 @@ class CloudVideoAdapter {
         const cfg = await loadActiveVideoConfig();
         if (!cfg.ok) {
             if (cfg.reason === 'no-config') {
-                throw new Error('云端未配置 video 类 API Key,请到 qianshanai.cn 网页端配置');
+                throw new Error('未配置 AI 视频模型。请到 设置 > AI 模型 > 运营虾本地模型配置 中填写视频模型 API 地址、模型 ID 和 API Key');
             }
-            throw new Error(`云端 video key 取明文失败(网络异常,请稍后重试):${cfg.detail || ''}`);
+            throw new Error(`AI 视频模型 Key 读取失败(网络异常或本地配置无效):${cfg.detail || ''}`);
         }
         if (cfg.providerCode === 'aliyun_dashscope') {
             return generateViaDashscope(cfg.apiKey, cfg.model, req, destDir);
@@ -1027,10 +1041,10 @@ function listProviders() {
     return [
         {
             id: 'cloud',
-            name: '☁️ 云端视频(按用户在 qianshanai.cn 配置的 provider 走)',
+            name: '本地/云端视频模型',
             configured: true,
             costPerSec: 0.1,
-            note: '用户云端 user_llm_config (video 类) 决定走灵芽中转还是百炼直连等',
+            note: '优先使用运营虾本地视频模型配置；未配置时才尝试兼容旧云端 video 配置',
         },
         {
             id: 'jimeng_cli',

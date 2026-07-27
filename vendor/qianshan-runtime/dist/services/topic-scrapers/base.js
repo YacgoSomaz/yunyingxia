@@ -135,7 +135,9 @@ class BaseTopicScraper {
                         finish('ok');
                     }
                     else if (status === 401 || status === 403) {
-                        finish('expired');
+                        // 这类平台经常对 net.request / 非完整页面请求返回 401/403，
+                        // 但用户真实打开创作者后台仍是登录状态；不能仅凭状态码清掉账号。
+                        finish('unknown');
                     }
                     else {
                         finish('unknown');
@@ -192,7 +194,7 @@ class BaseTopicScraper {
         };
         const partition = (0, browser_automation_1.partitionForAccount)(this.platform, account.id);
         // 2. cookie 存在性
-        const hasCookie = await (0, browser_automation_1.hasAnyCookie)(partition, this.cookieDomain);
+        const hasCookie = await (0, browser_automation_1.hasAnyCookie)(partition, this.cookieDomains || this.cookieDomain);
         if (!hasCookie) {
             return {
                 ok: false,

@@ -150,7 +150,14 @@ class LLMConfigService {
         }
         let runtimeRouting = routing.map((r) => ({ scene: r.scene, provider: r.provider, model: r.model }));
         const decryptedKeys = Array.from(merged.values());
-        const local = await local_llm_config_1.localLlmConfig.getCredential();
+        const aiSource = await local_llm_config_1.localLlmConfig.getAiSource();
+        if (aiSource === 'official') {
+            decryptedKeys.length = 0;
+            decryptedKeys.push({ provider: 'official_ai', official: true, model: 'official_ai' });
+            runtimeRouting = runtimeRouting.map((r) => ({ ...r, provider: 'official_ai', model: 'official_ai' }));
+            logger_1.logger.info('[LLMConfig] using official AI credits provider=official_ai');
+        }
+        const local = aiSource === 'custom' ? await local_llm_config_1.localLlmConfig.getCredential() : null;
         if (local) {
             const provider = local.provider;
             decryptedKeys.length = 0;

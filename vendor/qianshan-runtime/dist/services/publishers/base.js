@@ -48,7 +48,7 @@ class PlatformPublisher {
      */
     async verify(accountId) {
         const partition = (0, browser_automation_1.partitionForAccount)(this.platform, accountId);
-        const has = await (0, browser_automation_1.hasAnyCookie)(partition, this.cookieDomain);
+        const has = await (0, browser_automation_1.hasAnyCookie)(partition, this.cookieDomains || this.cookieDomain);
         if (!has)
             return { ok: false, error: '未登录或 cookie 已过期' };
         // 隐藏窗打开投稿页，看是否被踢回登录
@@ -76,7 +76,10 @@ class PlatformPublisher {
                 await new Promise((r) => setTimeout(r, 1500));
             }
             const finalUrl = win.isDestroyed() ? '' : win.webContents.getURL();
-            const loggedIn = this.isStillOnPublishArea(finalUrl);
+            let loggedIn = this.isStillOnPublishArea(finalUrl);
+            if (!loggedIn && !this.isExplicitLoginUrl(finalUrl)) {
+                loggedIn = await this.hasLoggedInPageSignal(win, finalUrl);
+            }
             if (!loggedIn) {
                 logger_1.logger.info(`[${this.platform}] verify: 已被踢离投稿页, cookie 过期 (${finalUrl})`);
                 return { ok: false, error: 'cookie 已过期，请重新扫码登录' };
@@ -109,7 +112,7 @@ class PlatformPublisher {
             if (cur.host !== entry.host)
                 return false;
             // 明确的登录页关键字一票否决（同 host 也可能是登录子路由）
-            if (/login|passport|signin|sign_in|scan_qr/i.test(cur.pathname))
+            if (this.isExplicitLoginUrl(currentUrl))
                 return false;
             const curSeg = cur.pathname.split('/').filter(Boolean)[0] || '';
             const entrySeg = entry.pathname.split('/').filter(Boolean)[0] || '';
@@ -121,6 +124,21 @@ class PlatformPublisher {
         catch {
             return false;
         }
+    }
+    isExplicitLoginUrl(currentUrl) {
+        if (!currentUrl)
+            return true;
+        try {
+            const cur = new URL(currentUrl);
+            const text = `${cur.host}${cur.pathname}${cur.search}`;
+            return /login|passport|signin|sign_in|scan_qr|qrcode|accountcenter/i.test(text);
+        }
+        catch {
+            return true;
+        }
+    }
+    async hasLoggedInPageSignal(_win, _currentUrl) {
+        return false;
     }
     /** 解绑：清空 partition session。 */
     async unbind(accountId) {

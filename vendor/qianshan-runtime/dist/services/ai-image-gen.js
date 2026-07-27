@@ -10,20 +10,14 @@ exports.hasAnyImageProvider = hasAnyImageProvider;
 exports.pickAvailableImageProvider = pickAvailableImageProvider;
 exports.listImageProviders = listImageProviders;
 // ══════════════════════════════════════════════════════════════════════
-//  AI 图片生成 — 完全云端化版本
+//  AI 图片生成
 //
-//  入口:generateImage(req, destDir)
-//    1. llmTierConfig.resolveCategory('image') 拿用户云端的 image 配置
-//       → { providerCode, baseUrl, apiKey/model } (apiKey 由 cloud-llm-config 解密)
-//    2. 按 providerCode 分协议分发:
-//       - 'aliyun_dashscope' → 百炼 image-synthesis async API
-//       - 其它 (lingya/wuyinkeji/cool/bltcy/geek/ ...) → OpenAI-compat /v1/images/generations
-//
-//  桌面端不再保留任何 provider 自己的 adapter class 或本地 fallback,
-//  baseUrl/apiKey/model 全部以云端 user_llm_config 那条记录为准。
+//  支持两种来源:
+//    1. 本地配置:用户自己保存 Base URL、模型 ID、API Key。
+//    2. 官方算力:客户端只提交 operation_image 任务,模型、价格、Key、下载资源均由服务端控制。
 // ══════════════════════════════════════════════════════════════════════
-const llm_tier_config_1 = require("./llm-tier-config");
-const cloud_llm_config_1 = require("./cloud-llm-config");
+const local_llm_config_1 = require("./local-llm-config");
+const official_ai_client_1 = require("./official-ai-client");
 const logger_1 = require("../utils/logger");
 const electron_1 = require("electron");
 const fs_1 = __importDefault(require("fs"));
@@ -81,7 +75,7 @@ async function downloadToFile(url, destPath) {
             }
         }
     }
-    throw new Error(`图片下载网络异常 url=${url.slice(0, 80)}... err=${String(lastErr?.message || lastErr)} (重试 ${MAX_ATTEMPTS} 次都失败)`);
+    throw new Error(`图片下载网络异常 err=${String(lastErr?.message || lastErr)} (重试 ${MAX_ATTEMPTS} 次都失败)`);
 }
 /**
  * OpenAI-compat baseUrl 归一化(只对 OpenAI-compat 渠道做):
@@ -108,38 +102,49 @@ function stripV1Suffix(baseUrl) {
     return trimmed;
 }
 /**
- * 取云端 image 配置的当前选中条。
+ * 取图片生成配置。
  *
  * 返回值含义:
- *   - 'no-config' : 用户云端确实没配 image 类配置 → UI 提示去网页配
- *   - 'no-key'    : 配置存在但 decrypt-key 调用失败(通常网络抖动或 token 过期)→ UI 提示稍后重试
+ *   - 'no-config' : 用户没有保存本地图片模型,也没有选择官方算力
  */
 async function loadActiveImageConfig() {
-    const r = await llm_tier_config_1.llmTierConfig.resolveCategory('image');
-    if (!r || !r.cloudId || !r.providerCode || !r.baseUrl) {
-        return { ok: false, reason: 'no-config' };
+    const imageSource = await local_llm_config_1.localLlmConfig.getImageSource();
+    if (imageSource === 'official') {
+        return { ok: true, providerCode: 'official_ai', source: 'official-image' };
     }
-    let apiKey = null;
-    try {
-        apiKey = await (0, cloud_llm_config_1.getDecryptedKey)(r.cloudId);
+    const local = await local_llm_config_1.localLlmConfig.getImageCredential();
+    if (local?.apiKey && local?.providerCode && local?.baseUrl && local?.model) {
+        logger_1.logger.info(`[AIImage] using local image config provider=${local.providerCode} model=${local.model}`);
+        const baseUrl = PRIVATE_ASYNC_PROVIDERS.has(local.providerCode)
+            ? local.baseUrl.replace(/\/+$/, '')
+            : normalizeOpenAICompatBaseUrl(local.baseUrl);
+        return {
+            ok: true,
+            providerCode: local.providerCode,
+            baseUrl,
+            apiKey: local.apiKey,
+            model: local.model,
+            source: 'local-image',
+        };
     }
-    catch (err) {
-        return { ok: false, reason: 'no-key', detail: String(err?.message || err) };
-    }
-    if (!apiKey) {
-        return { ok: false, reason: 'no-key', detail: 'decrypt-key 返回空' };
-    }
-    const trimmed = r.baseUrl.replace(/\/+$/, '');
-    const baseUrl = PRIVATE_ASYNC_PROVIDERS.has(r.providerCode)
-        ? trimmed
-        : normalizeOpenAICompatBaseUrl(trimmed);
-    return {
-        ok: true,
-        providerCode: r.providerCode,
-        baseUrl,
-        apiKey,
-        model: r.model,
-    };
+    return { ok: false, reason: 'no-config' };
+}
+async function generateViaOfficialImage(req, destDir) {
+    const prompt = String(req.promptCN || req.promptEN || '').trim();
+    if (!prompt)
+        throw new Error('官方图片输入内容为空');
+    const idempotencyKey = crypto_1.default.randomUUID();
+    const assets = await official_ai_client_1.officialAiClient.generateImage(prompt, idempotencyKey);
+    const first = assets[0];
+    const imageUrl = first?.display_url || first?.download_url;
+    if (!imageUrl)
+        throw new Error('官方图片任务未返回图片资源');
+    fs_1.default.mkdirSync(destDir, { recursive: true });
+    const ext = /jpe?g/i.test(first.mime_type) ? 'jpg' : /webp/i.test(first.mime_type) ? 'webp' : 'png';
+    const localName = `official-${Date.now()}-${crypto_1.default.randomBytes(3).toString('hex')}.${ext}`;
+    const localPath = path_1.default.join(destDir, localName);
+    await downloadToFile(imageUrl, localPath);
+    return { localPath, displayUrl: first.display_url || imageUrl, downloadUrl: first.download_url || imageUrl, provider: 'official_ai', costCny: 0, elapsedSec: 0 };
 }
 // ─────────────────────────────────────────────────────────────────────────
 // OpenAI-compat 分支(lingya/wuyinkeji/cool/bltcy/geek/...)
@@ -194,7 +199,7 @@ async function generateViaOpenAICompat(baseUrl, apiKey, model, req, destDir) {
         const aspectHint = req.aspect === '9:16' ? ', aspect ratio 9:16, vertical portrait orientation'
             : req.aspect === '16:9' ? ', aspect ratio 16:9, horizontal landscape orientation'
                 : ', aspect ratio 1:1, square format';
-        logger_1.logger.info(`[AIImage][${model}] chat-md: "${basePrompt.slice(0, 80)}..." aspect=${req.aspect}`);
+        logger_1.logger.info(`[AIImage][${model}] chat-md request aspect=${req.aspect}`);
         const r = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
@@ -513,7 +518,7 @@ async function generateViaWuyinkeji(baseUrl, apiKey, model, req, destDir) {
     if (!imageUrl)
         throw new Error(`速创出图超时(240s, last_status=${lastStatus})`);
     // ③ 下载
-    logger_1.logger.info(`[AIImage][wuyinkeji:${taskId}] downloading ${imageUrl}`);
+    logger_1.logger.info(`[AIImage][wuyinkeji:${taskId}] downloading result image`);
     const localName = `wyk-${String(taskId).slice(-12)}-${crypto_1.default.randomBytes(3).toString('hex')}.png`;
     const localPath = path_1.default.join(destDir, localName);
     await downloadToFile(imageUrl, localPath);
@@ -651,7 +656,7 @@ async function generateViaBltcy(baseUrl, apiKey, model, req, destDir) {
     if (!imageUrl)
         throw new Error(`柏拉图出图超时(480s, last_status=${lastStatus})`);
     // ③ 下载
-    logger_1.logger.info(`[AIImage][bltcy:${taskId}] downloading ${imageUrl}`);
+    logger_1.logger.info(`[AIImage][bltcy:${taskId}] downloading result image`);
     const localName = `bltcy-${String(taskId).slice(-12)}-${crypto_1.default.randomBytes(3).toString('hex')}.png`;
     const localPath = path_1.default.join(destDir, localName);
     await downloadToFile(imageUrl, localPath);
@@ -763,7 +768,7 @@ async function generateViaCool(baseUrl, apiKey, model, req, destDir) {
     if (!imageUrl)
         throw new Error(`Cool 出图超时(500s, last_status=${lastStatus})`);
     // ③ 下载
-    logger_1.logger.info(`[AIImage][cool:${taskId}] downloading ${imageUrl}`);
+    logger_1.logger.info(`[AIImage][cool:${taskId}] downloading result image`);
     const localName = `cool-${String(taskId).slice(-12)}-${crypto_1.default.randomBytes(3).toString('hex')}.png`;
     const localPath = path_1.default.join(destDir, localName);
     await downloadToFile(imageUrl, localPath);
@@ -784,7 +789,7 @@ async function generateViaDashscope(apiKey, model, req, destDir) {
         '1:1': '1024*1024',
     };
     const size = sizeMap[req.aspect] || '1024*1024';
-    logger_1.logger.info(`[AIImage][dashscope:${model}] async: "${basePrompt.slice(0, 80)}..." size=${size}`);
+    logger_1.logger.info(`[AIImage][dashscope:${model}] async request size=${size}`);
     // ① 提交任务
     const submitRes = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis', {
         method: 'POST',
@@ -840,12 +845,13 @@ async function generateImage(req, destDir, _preferred) {
     const cfg = await loadActiveImageConfig();
     if (!cfg.ok) {
         if (cfg.reason === 'no-config') {
-            throw new Error('云端未配置 image 类 API Key,请到 qianshanai.cn 网页端配置');
+            throw new Error('未配置 AI 图片模型。请到 设置 > AI 模型 > AI 图片生成模型配置 中选择本地配置或官方算力');
         }
-        // no-key: 配置存在,但解密 key 拿不到 — 通常是网络抖动 / token 过期
-        throw new Error(`云端 image key 取明文失败(网络异常,请稍后重试):${cfg.detail || ''}`);
+        throw new Error('未配置 AI 图片模型。请到 设置 > AI 模型 > AI 图片生成模型配置 中选择本地配置或官方算力');
     }
     switch (cfg.providerCode) {
+        case 'official_ai':
+            return generateViaOfficialImage(req, destDir);
         case 'aliyun_dashscope':
             return generateViaDashscope(cfg.apiKey, cfg.model, req, destDir);
         case 'volcengine':
@@ -864,7 +870,7 @@ async function generateImage(req, destDir, _preferred) {
 }
 /** 是否有可用的图像生成能力(给 one-click 决定要不要走 ai-image 分支) */
 function hasAnyImageProvider() {
-    // 真假在 generate 时查云端;这里恒 true,失败由 generate 抛错由上层降级到素材库
+    // 真假在 generate 时查本地配置 / 官方 catalog;这里恒 true,失败由 generate 抛错由上层降级到素材库
     return true;
 }
 /** 老 API 兼容:给 one-click 拿一个稳定的 provider id */
@@ -876,10 +882,10 @@ function listImageProviders() {
     return [
         {
             id: 'cloud',
-            name: '☁️ 云端图像(按用户在 qianshanai.cn 配置的 provider 走)',
+            name: '本地/官方 AI 图片',
             configured: true,
             costPerImage: 0.22,
-            note: '具体走哪条 + 用什么 model 由用户云端 user_llm_config (image 类)决定',
+            note: '可在运营虾本地模型配置中选择本地自配图片模型或官方图片算力',
         },
     ];
 }
@@ -887,3 +893,4 @@ function listImageProviders() {
 // getImageAdapter / 单 adapter class 等接口随云端化全部退役;若有外部模块仍依赖,
 // 升级时改成调 generateImage(req, destDir) 即可。
 //# sourceMappingURL=ai-image-gen.js.map
+

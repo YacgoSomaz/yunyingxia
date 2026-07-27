@@ -138,6 +138,31 @@ describe("bundled media binaries", () => {
     expect(buildScript).toContain("./dist/");
   });
 
+  it("hardens core commercial JavaScript before signing the integrity manifest", () => {
+    const buildScript = readFileSync(
+      join(projectRoot, "packaging", "build", "build_release.ps1"),
+      "utf8",
+    );
+    const hardenScript = readFileSync(
+      join(projectRoot, "packaging", "build", "harden-core-js.cjs"),
+      "utf8",
+    );
+
+    expect(buildScript).toContain("harden-core-js.cjs");
+    expect(buildScript.indexOf("harden-core-js.cjs")).toBeLessThan(
+      buildScript.indexOf("生成 integrity_manifest.json"),
+    );
+    expect(hardenScript).toContain("dist-electron/electron/account-service.js");
+    expect(hardenScript).toContain("dist-electron/electron/integrity-verifier.js");
+    expect(hardenScript).toContain("dist-electron/electron/update-service.js");
+    expect(hardenScript).toContain("vendor/qianshan-runtime/dist/paid-action-auth.js");
+    expect(hardenScript).toContain("minify: true");
+    expect(hardenScript).toContain("JavaScriptObfuscator.obfuscate");
+    expect(hardenScript).toContain("controlFlowFlattening: true");
+    expect(hardenScript).toContain("stringArrayEncoding: ['base64']");
+    expect(hardenScript).toContain("splitStrings: true");
+  });
+
   it("packages the compiled runtime release monitor without development-only files", () => {
     const buildScript = readFileSync(
       join(projectRoot, "packaging", "build", "build_release.ps1"),

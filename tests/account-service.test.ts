@@ -20,6 +20,10 @@ function b64url(input: Buffer | string): string {
 
 function signedEnvelope(payload: Record<string, unknown>) {
   const keys = crypto.generateKeyPairSync('ed25519')
+  return signedEnvelopeWithKeys(payload, keys)
+}
+
+function signedEnvelopeWithKeys(payload: Record<string, unknown>, keys: crypto.KeyPairSyncResult<string, string> | crypto.KeyPairSyncResult<Buffer, Buffer>) {
   const payloadText = JSON.stringify(payload)
   const signature = crypto.sign(null, Buffer.from(payloadText), keys.privateKey)
   const publicDer = keys.publicKey.export({ format: 'der', type: 'spki' })
@@ -103,6 +107,61 @@ describe('account authorization', () => {
     expect(user.remaining_days).toBe(18)
     expect(user.need_recharge).toBe(false)
     expect(hasActiveAccess(user)).toBe(false)
+  })
+
+  it('normalizes account energy balance aliases for display only', () => {
+    expect(normalizeAccountUser({ id: 1, phone: '13812345678', energyBalance: 103000 }).energy_balance).toBe(103000)
+    expect(normalizeAccountUser({ id: 1, phone: '13812345678', credits_balance: 8800 }).energy_balance).toBe(8800)
+    expect(normalizeAccountUser({ id: 1, phone: '13812345678', availableEnergy: 66 }).energy_balance).toBe(66)
+    expect(hasActiveAccess(normalizeAccountUser({ id: 1, phone: '13812345678', energyBalance: 103000 }))).toBe(false)
+  })
+
+  it('keeps latest display energy balance when reading a signed cached account', () => {
+    const now = Date.now()
+    const issuedAt = Math.floor(now / 1000)
+    const { publicKey, envelope } = signedEnvelope({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 600,
+      user: { id: 1, phone: '13812345678', energy_balance: 0 },
+      products: [{
+        product_id: OPERATION_PRODUCT_ID,
+        name: '运营虾',
+        status: 'active',
+        expires_at: new Date(now + 86_400_000).toISOString(),
+        entitlements: [OPERATION_ENTITLEMENT],
+      }],
+    })
+    const service = new AccountService({
+      commercial: true,
+      licenseServerUrl: 'https://license.runmo.art',
+      licensePublicKey: '',
+      accountServerUrl: 'https://anyq.site',
+      accountPublicKey: publicKey,
+      updatePublicKey: '',
+      integrityPublicKey: '',
+      offlineGraceHours: 0,
+      productCode: OPERATION_PRODUCT_ID,
+      appName: '运营虾',
+      version: '0.1.15',
+    })
+    service.clearCache()
+    ;(service as unknown as { writeCache(state: unknown): void }).writeCache({
+      cookie: 'session=test',
+      user: normalizeAccountUser({ id: 1, phone: '13812345678', energyBalance: 103000 }, now),
+      products: [],
+      productsAuthoritative: false,
+      accountLicense: envelope,
+      signedUntil: issuedAt + 600,
+      lastCheckedAt: issuedAt,
+    })
+
+    const state = service.currentState()
+    expect(hasActiveAccess(state)).toBe(true)
+    expect(state?.user.energy_balance).toBe(103000)
+    service.clearCache()
   })
 
   it('derives membership fields for older account responses', () => {
@@ -324,8 +383,8 @@ describe('account authorization', () => {
     expect(() => verifyAccountEnvelope(envelope, publicKey, Date.parse(issuedAt) + 15 * 60_000)).toThrow('账号授权包已过期')
   })
 
-  it('refreshes account authorization every 60 seconds and no longer boots through card keys', () => {
-    expect(ACCOUNT_REFRESH_INTERVAL_SECONDS).toBe(60)
+  it('refreshes account authorization every 10 seconds and no longer boots through card keys', () => {
+    expect(ACCOUNT_REFRESH_INTERVAL_SECONDS).toBe(10)
     const main = readFileSync('electron/main.ts', 'utf8')
     const preload = readFileSync('electron/preload.ts', 'utf8')
     expect(main).toContain('account.startBackgroundRefresh')
@@ -415,6 +474,73 @@ describe('account authorization', () => {
     service.clearCache()
   })
 
+  it('removes local entitlement when the signed account license no longer grants operation_course', async () => {
+    const now = Date.now()
+    const issuedAt = Math.floor(now / 1000)
+    const keys = crypto.generateKeyPairSync('ed25519')
+    const { publicKey, envelope: activeEnvelope } = signedEnvelopeWithKeys({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 60,
+      user: { id: 1, phone: '13812345678' },
+      products: [{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }],
+    }, keys)
+    const { envelope: inactiveEnvelope } = signedEnvelopeWithKeys({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 60,
+      user: { id: 1, phone: '13812345678', energy_balance: 9999, membership_expires_at: new Date(now + 86_400_000).toISOString() },
+      products: [{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [] }],
+    }, keys)
+    const service = new AccountService({
+      commercial: true,
+      licenseServerUrl: 'https://license.runmo.art',
+      licensePublicKey: '',
+      accountServerUrl: 'https://anyq.site',
+      accountPublicKey: publicKey,
+      updatePublicKey: '',
+      integrityPublicKey: '',
+      offlineGraceHours: 0,
+      productCode: OPERATION_PRODUCT_ID,
+      appName: '运营虾',
+      version: '0.1.15',
+    })
+    service.clearCache()
+    ;(service as unknown as { writeCache(state: unknown): void }).writeCache({
+      cookie: 'session=test',
+      user: normalizeAccountUser({ id: 1, phone: '13812345678' }, now),
+      products: normalizeAccountProducts([{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }]),
+      productsAuthoritative: true,
+      accountLicense: activeEnvelope,
+      signedUntil: issuedAt + 60,
+      lastCheckedAt: Math.floor(now / 1000),
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        user: { id: 1, phone: '13812345678' },
+        products: [{ product_id: OPERATION_PRODUCT_ID, status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }],
+        membership_expires_at: new Date(now + 86_400_000).toISOString(),
+        energy_balance: 9999,
+        account_license: inactiveEnvelope,
+      }),
+      headers: { get: () => null },
+    })))
+
+    const result = await service.verifyOperationEntitlement()
+    expect(result.source).toBe('remote')
+    expect(result.entitled).toBe(false)
+    expect(hasActiveAccess(result.state)).toBe(false)
+    expect(hasActiveAccess(service.currentState())).toBe(false)
+    service.clearCache()
+  })
+
   it('keeps a signed entitlement only until signed_until during a network failure', async () => {
     const now = Date.now()
     const issuedAt = Math.floor(now / 1000)
@@ -455,6 +581,133 @@ describe('account authorization', () => {
     const result = await service.verifyOperationEntitlement()
     expect(result.source).toBe('cached-network')
     expect(result.entitled).toBe(true)
+    service.clearCache()
+  })
+
+  it('uses an expired signed cache only as a cookie holder so startup can refresh from the server', async () => {
+    const now = Date.now()
+    const issuedAt = Math.floor(now / 1000) - 900
+    const refreshedAt = Math.floor(now / 1000)
+    const keys = crypto.generateKeyPairSync('ed25519')
+    const { publicKey, envelope: expiredEnvelope } = signedEnvelopeWithKeys({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 600,
+      user: { id: 1, phone: '13812345678' },
+      products: [{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }],
+    }, keys)
+    const { envelope: freshEnvelope } = signedEnvelopeWithKeys({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: refreshedAt,
+      signed_until: refreshedAt + 600,
+      user: { id: 1, phone: '13812345678' },
+      products: [{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }],
+    }, keys)
+    const service = new AccountService({
+      commercial: true,
+      licenseServerUrl: 'https://license.runmo.art',
+      licensePublicKey: '',
+      accountServerUrl: 'https://anyq.site',
+      accountPublicKey: publicKey,
+      updatePublicKey: '',
+      integrityPublicKey: '',
+      offlineGraceHours: 0,
+      productCode: OPERATION_PRODUCT_ID,
+      appName: '运营虾',
+      version: '0.1.15',
+    })
+    service.clearCache()
+    ;(service as unknown as { writeCache(state: unknown): void }).writeCache({
+      cookie: 'session=test',
+      user: normalizeAccountUser({ id: 1, phone: '13812345678' }, now),
+      products: normalizeAccountProducts([{ product_id: OPERATION_PRODUCT_ID, name: '运营虾', status: 'active', expires_at: new Date(now + 86_400_000).toISOString(), entitlements: [OPERATION_ENTITLEMENT] }]),
+      productsAuthoritative: true,
+      accountLicense: expiredEnvelope,
+      signedUntil: issuedAt + 600,
+      lastCheckedAt: refreshedAt - 1,
+    })
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, options: { headers?: Record<string, string> }) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        user: { id: 1, phone: '13812345678' },
+        account_license: freshEnvelope,
+      }),
+      headers: { get: () => null },
+      requestCookie: options.headers?.cookie,
+    })))
+
+    const state = await service.ensureSession()
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/auth/me'), expect.objectContaining({
+      headers: expect.objectContaining({
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      }),
+    }))
+    expect(state?.cookie).toBe('session=test')
+    expect(hasActiveAccess(state)).toBe(true)
+    service.clearCache()
+  })
+
+  it('uses the signed license for entitlement while showing the latest root user energy balance', async () => {
+    const now = Date.now()
+    const issuedAt = Math.floor(now / 1000)
+    const { publicKey, envelope } = signedEnvelope({
+      typ: 'anyq.account-license.v1',
+      iss: 'https://anyq.site',
+      aud: OPERATION_PRODUCT_ID,
+      issued_at: issuedAt,
+      signed_until: issuedAt + 600,
+      user: { id: 1, phone: '13812345678', energy_balance: 0 },
+      products: [{
+        product_id: OPERATION_PRODUCT_ID,
+        name: '运营虾',
+        status: 'active',
+        expires_at: new Date(now + 86_400_000).toISOString(),
+        entitlements: [OPERATION_ENTITLEMENT],
+      }],
+    })
+    const service = new AccountService({
+      commercial: true,
+      licenseServerUrl: 'https://license.runmo.art',
+      licensePublicKey: '',
+      accountServerUrl: 'https://anyq.site',
+      accountPublicKey: publicKey,
+      updatePublicKey: '',
+      integrityPublicKey: '',
+      offlineGraceHours: 0,
+      productCode: OPERATION_PRODUCT_ID,
+      appName: '运营虾',
+      version: '0.1.15',
+    })
+    service.clearCache()
+    ;(service as unknown as { writeCache(state: unknown): void }).writeCache({
+      cookie: 'session=test',
+      user: normalizeAccountUser({ id: 1, phone: '13812345678', energy_balance: 0 }, now),
+      products: [],
+      productsAuthoritative: false,
+      lastCheckedAt: issuedAt,
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        user: { id: 1, phone: '13812345678', energy_balance: 103000 },
+        account_license: envelope,
+      }),
+      headers: { get: () => null },
+    })))
+
+    const state = await service.ensureSession()
+    expect(hasActiveAccess(state)).toBe(true)
+    expect(state?.user.energy_balance).toBe(103000)
     service.clearCache()
   })
 

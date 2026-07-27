@@ -3,6 +3,30 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DeepSeekClient = void 0;
 const base_client_1 = require("./base-client");
 const types_1 = require("./types");
+async function sanitizeProviderError(res, label) {
+    const text = await res.text().catch(() => '');
+    let code = '';
+    let message = '';
+    try {
+        const json = JSON.parse(text);
+        code = String(json?.error?.code || json?.code || '');
+        message = String(json?.error?.message || json?.message || json?.error || '');
+    }
+    catch {
+        message = text;
+    }
+    const lower = `${code} ${message}`.toLowerCase();
+    if (res.status === 401 || res.status === 403 || /api[\s_-]*key|authentication|unauthorized|forbidden|invalid_request_error|invalid.*key|permission/.test(lower)) {
+        return new Error(`${label} ${res.status}: API Key 无效或无权限，请检查本地模型配置或切换官方算力`);
+    }
+    if (res.status === 429 || /rate|limit|quota/.test(lower)) {
+        return new Error(`${label} ${res.status}: 模型服务限流或额度不足，请稍后再试`);
+    }
+    if (res.status >= 500) {
+        return new Error(`${label} ${res.status}: 模型服务暂时不可用，请稍后再试`);
+    }
+    return new Error(`${label} ${res.status}: 模型服务请求失败`);
+}
 class DeepSeekClient extends base_client_1.BaseLLMClient {
     baseUrl;
     constructor(config) {
@@ -32,7 +56,7 @@ class DeepSeekClient extends base_client_1.BaseLLMClient {
                 signal: AbortSignal.timeout(this.config.timeout),
             });
             if (!res.ok)
-                throw new Error(`DeepSeek API ${res.status}: ${await res.text()}`);
+                throw await sanitizeProviderError(res, 'DeepSeek API');
             const data = (await res.json());
             return {
                 content: data.choices[0].message.content,

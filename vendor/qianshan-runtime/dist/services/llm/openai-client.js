@@ -24,6 +24,30 @@ function applyDeepseekV4JsonMode(body, model) {
         body.max_tokens = DEEPSEEK_V4_JSON_MAX_TOKENS;
     }
 }
+async function sanitizeProviderError(res, label) {
+    const text = await res.text().catch(() => '');
+    let code = '';
+    let message = '';
+    try {
+        const json = JSON.parse(text);
+        code = String(json?.error?.code || json?.code || '');
+        message = String(json?.error?.message || json?.message || json?.error || '');
+    }
+    catch {
+        message = text;
+    }
+    const lower = `${code} ${message}`.toLowerCase();
+    if (res.status === 401 || res.status === 403 || /api[\s_-]*key|authentication|unauthorized|forbidden|invalid_request_error|invalid.*key|permission/.test(lower)) {
+        return new Error(`${label} ${res.status}: API Key 无效或无权限，请检查本地模型配置或切换官方算力`);
+    }
+    if (res.status === 429 || /rate|limit|quota/.test(lower)) {
+        return new Error(`${label} ${res.status}: 模型服务限流或额度不足，请稍后再试`);
+    }
+    if (res.status >= 500) {
+        return new Error(`${label} ${res.status}: 模型服务暂时不可用，请稍后再试`);
+    }
+    return new Error(`${label} ${res.status}: 模型服务请求失败`);
+}
 /**
  * 泛 OpenAI-compat 客户端 — 云端化后桌面端唯一的真实 LLM client。
  *
@@ -68,7 +92,7 @@ class OpenAIClient extends base_client_1.BaseLLMClient {
                 signal: AbortSignal.timeout(options.timeoutMs ?? this.config.timeout * 5),
             });
             if (!res.ok)
-                throw new Error(`OpenAI API ${res.status}: ${await res.text()}`);
+                throw await sanitizeProviderError(res, 'OpenAI API');
             const data = (await res.json());
             const choice = data.choices[0];
             return {

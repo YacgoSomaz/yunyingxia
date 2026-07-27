@@ -201,5 +201,11 @@ exports.digitalHumanPrefs = {
             `xiling.appKeyConfigured=${!!next.xiling.appKeyEncrypted}`);
         return this.getPublic();
     },
+    clear() {
+        cache = DEFAULTS;
+        persist(DEFAULTS);
+        logger_1.logger.info('[DigitalHumanPrefs] cleared local digital human prefs');
+        return this.getPublic();
+    },
 };
 //# sourceMappingURL=digital-human-prefs.js.map

@@ -20,6 +20,7 @@ class DouyinScraper extends base_1.BaseTopicScraper {
     platform = 'douyin';
     targetUrl = 'https://creator.douyin.com/creator-micro/home';
     cookieDomain = '.douyin.com';
+    cookieDomains = ['.douyin.com', 'douyin.com', '.creator.douyin.com', 'creator.douyin.com'];
     probeUrl = 'https://creator.douyin.com/creator-micro/home';
     readySignal = `
     (() => {

@@ -29,6 +29,19 @@ function mockFetchMetrics(platform) {
         followersGained: Math.floor(views * (0.001 + Math.random() * 0.005)),
     };
 }
+function isAccountExpiredError(message) {
+    return /cookie\s*已过期|未登录|登录.*过期|重新扫码|扫码登录|login.*expired|not\s*logged\s*in/i.test(String(message || ''));
+}
+async function markAccountExpired(accountId, reason) {
+    await db_1.db
+        .update(schema_1.platformAccounts)
+        .set({
+        lastVerifiedAt: new Date().toISOString(),
+        verifyStatus: 'expired',
+    })
+        .where((0, drizzle_orm_1.eq)(schema_1.platformAccounts.id, accountId));
+    logger_1.logger.warn(`[Distribute] account ${accountId} marked expired: ${String(reason).slice(0, 160)}`);
+}
 class DistributeService {
     // ═══════════════ 账号管理 ═══════════════
     async addAccount(data) {
@@ -69,7 +82,12 @@ class DistributeService {
         if (r.ok) {
             await db_1.db
                 .update(schema_1.platformAccounts)
-                .set({ lastLoginAt: new Date().toISOString(), isActive: 1 })
+                .set({
+                lastLoginAt: new Date().toISOString(),
+                lastVerifiedAt: new Date().toISOString(),
+                verifyStatus: 'ok',
+                isActive: 1,
+            })
                 .where((0, drizzle_orm_1.eq)(schema_1.platformAccounts.id, id));
         }
         return r;
@@ -310,6 +328,11 @@ class DistributeService {
                     .map((p) => p.platform)
                     .join(', ')}`);
             }
+            const authCheck = await this.verifyAccount(task.accountId);
+            if (!authCheck.ok) {
+                await markAccountExpired(task.accountId, authCheck.error || 'publish preflight failed');
+                throw new Error(authCheck.error || '账号登录已过期，请到「账号管理」重新扫码登录');
+            }
             const mediaPaths = task.mediaPaths
                 ? JSON.parse(task.mediaPaths)
                 : [];
@@ -354,6 +377,9 @@ class DistributeService {
         }
         catch (err) {
             const msg = String(err);
+            if (task?.accountId && isAccountExpiredError(msg)) {
+                await markAccountExpired(task.accountId, msg);
+            }
             await db_1.db
                 .update(schema_1.publishTasks)
                 .set({
@@ -398,7 +424,8 @@ class DistributeService {
                 results.push({ accountId, taskId: task.id, ...r });
             }
             catch (e) {
-                results.push({ accountId, taskId: task.id, ok: false, error: String(e) });
+                const error = String(e?.message || e);
+                results.push({ accountId, taskId: task.id, ok: false, error });
             }
         }
         return results;

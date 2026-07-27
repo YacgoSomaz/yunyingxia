@@ -24,6 +24,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const logger_1 = require("../utils/logger");
 const cloud_llm_config_1 = require("./cloud-llm-config");
+const local_llm_config_1 = require("./local-llm-config");
 const GET_POLICY_URL = 'https://dashscope.aliyuncs.com/api/v1/uploads';
 /**
  * 上传本地文件到百炼临时存储，返回 oss:// 形式的内部 URL。
@@ -33,11 +34,12 @@ const GET_POLICY_URL = 'https://dashscope.aliyuncs.com/api/v1/uploads';
  * @returns oss://{upload_dir}/{filename} —— 直接给消费方 API 用
  */
 async function uploadFileToDashscope(localPath, model) {
+    const localVoice = await local_llm_config_1.localLlmConfig.getVoiceCredential();
     const cloud = await (0, cloud_llm_config_1.getCloudDefault)('voice', 'aliyun_dashscope');
-    if (!cloud?.apiKey) {
-        throw new Error('未配置百炼 voice key,请到 qianshanai.cn/user/llm-configs 添加');
+    const apiKey = localVoice?.apiKey || cloud?.apiKey;
+    if (!apiKey) {
+        throw new Error('未配置百炼 voice key，请在运营虾本地模型配置里填写口播/声音克隆配置');
     }
-    const apiKey = cloud.apiKey;
     if (!fs_1.default.existsSync(localPath))
         throw new Error(`文件不存在: ${localPath}`);
     // ── 1) 拿上传凭证 ──

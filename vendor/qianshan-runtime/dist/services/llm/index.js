@@ -17,6 +17,7 @@ exports.llm = void 0;
 // ══════════════════════════════════════════════════════════════════════
 const openai_client_1 = require("./openai-client");
 const mock_client_1 = require("./mock-client");
+const official_ai_client_1 = require("../official-ai-client");
 const logger_1 = require("../../utils/logger");
 const config_1 = require("../../utils/config");
 /**
@@ -121,7 +122,7 @@ class LLMService {
         this.credentials.clear();
         this.clients.clear(); // 清 client 池(凭据可能变了)
         for (const c of creds) {
-            this.credentials.set(c.provider, { apiKey: c.apiKey, baseUrl: c.baseUrl || undefined, model: c.model || undefined });
+            this.credentials.set(c.provider, { apiKey: c.apiKey, baseUrl: c.baseUrl || undefined, model: c.model || undefined, official: c.official === true });
         }
     }
     /** 当前已注册的 provider 集合(不含 mock) */
@@ -136,6 +137,8 @@ class LLMService {
     buildClient(provider, apiKey, model, baseUrl) {
         if (provider === 'mock')
             return new mock_client_1.MockLLMClient();
+        if (provider === 'official_ai')
+            return new official_ai_client_1.OfficialAIClient();
         return new openai_client_1.OpenAIClient({ apiKey, model, baseUrl, provider });
     }
     getClient(provider, model) {
@@ -146,6 +149,13 @@ class LLMService {
             return this.clients.get(k);
         }
         const cred = this.credentials.get(provider);
+        if (cred?.official === true || provider === 'official_ai') {
+            const cacheKey = 'official_ai';
+            if (!this.clients.has(cacheKey)) {
+                this.clients.set(cacheKey, new official_ai_client_1.OfficialAIClient());
+            }
+            return this.clients.get(cacheKey);
+        }
         if (!cred?.apiKey) {
             if (config_1.USE_MOCK) {
                 logger_1.logger.warn(`[LLM] No credential for ${provider}, USE_MOCK=1, falling back to mock`);

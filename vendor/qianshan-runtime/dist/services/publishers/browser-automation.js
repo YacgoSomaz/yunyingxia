@@ -520,8 +520,44 @@ async function getCookieHeader(partition, url) {
  */
 async function hasAnyCookie(partition, domain) {
     const ses = electron_1.session.fromPartition(partition);
-    const cookies = await ses.cookies.get({ domain });
-    return cookies.length > 0;
+    const inputDomains = Array.isArray(domain) ? domain : [domain];
+    const candidates = new Set();
+    for (const item of inputDomains) {
+        const value = String(item || '').trim();
+        if (!value)
+            continue;
+        const bare = value.replace(/^\./, '');
+        candidates.add(value);
+        candidates.add(bare);
+        candidates.add(`.${bare}`);
+    }
+    for (const candidate of candidates) {
+        try {
+            const cookies = await ses.cookies.get({ domain: candidate });
+            if (cookies.length > 0)
+                return true;
+        }
+        catch {
+            /* try next */
+        }
+    }
+    // Electron 的 domain filter 对前导点和子域匹配并不总是稳定。兜底只在当前账号
+    // partition 内扫描，避免 creator.douyin.com / douyin.com 这种同站 cookie 被误判丢失。
+    const baseDomains = Array.from(candidates)
+        .map((value) => value.replace(/^\./, '').toLowerCase())
+        .filter(Boolean);
+    if (!baseDomains.length)
+        return false;
+    try {
+        const all = await ses.cookies.get({});
+        return all.some((cookie) => {
+            const cookieDomain = String(cookie.domain || '').replace(/^\./, '').toLowerCase();
+            return baseDomains.some((base) => cookieDomain === base || cookieDomain.endsWith(`.${base}`));
+        });
+    }
+    catch {
+        return false;
+    }
 }
 /**
  * 清空 partition 下的所有 cookie 和 storage（用户"解绑"账号时调用）。

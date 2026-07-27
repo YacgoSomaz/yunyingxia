@@ -1,5 +1,7 @@
-// Only the explicit startup and entitlement boundary belongs in the signed
-// integrity manifest. User content and ordinary runtime files stay outside it.
+// Only the startup, account, update, and entitlement boundary belongs in the
+// signed integrity manifest. User content and ordinary runtime files stay
+// outside it so imports, exports, caches, cookies, and local databases cannot
+// break startup.
 export const INTEGRITY_PROTECTED_EXACT_PATHS = [
   'package.json',
   'dist-electron/electron/main.js',
@@ -22,12 +24,34 @@ export const INTEGRITY_PROTECTED_EXACT_PATHS = [
 
 export const INTEGRITY_PROTECTED_PATH_PREFIXES: readonly string[] = []
 
+export const INTEGRITY_MUTABLE_PATH_PREFIXES = [
+  'data/',
+  'exports/',
+  'downloads/',
+  'cache/',
+  'logs/',
+  'cookies/',
+  'user-data/',
+  'tmp/',
+  'temp/',
+  'vendor/qianshan-runtime/data/',
+  'vendor/qianshan-runtime/uploads/',
+  'vendor/qianshan-runtime/exports/',
+  'vendor/qianshan-runtime/tmp/',
+] as const
+
 function normalize(relativePath: string): string {
   return String(relativePath || '').replace(/\\/g, '/').replace(/^\.\//, '')
 }
 
+export function isIntegrityMutablePath(relativePath: string): boolean {
+  const normalized = normalize(relativePath)
+  return INTEGRITY_MUTABLE_PATH_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+}
+
 export function isIntegrityProtectedPath(relativePath: string): boolean {
   const normalized = normalize(relativePath)
+  if (isIntegrityMutablePath(normalized)) return false
   return INTEGRITY_PROTECTED_EXACT_PATHS.includes(normalized as typeof INTEGRITY_PROTECTED_EXACT_PATHS[number])
     || INTEGRITY_PROTECTED_PATH_PREFIXES.some((prefix) => normalized.startsWith(prefix))
 }

@@ -23,12 +23,12 @@ const DEFAULT_CONFIG: CommercialConfig = {
   licensePublicKey: '',
   accountServerUrl: 'https://anyq.site',
   accountPublicKey: 'CqLAEE2KnduTFtw1gVQIExS1qLRa-XI3TaWpbchMbKc',
-  updatePublicKey: '',
+  updatePublicKey: 'lYg7Ws_9MxeQYmSVP6SNJ8ZgRh1isI8mv_SwIrP7eZ4',
   integrityPublicKey: '',
   offlineGraceHours: 72,
   productCode: FIXED_PRODUCT_CODE,
   appName: '运营虾',
-  version: '0.1.24',
+  version: '0.1.28',
 }
 
 function assertHttps(url: string): string {
